@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -16,7 +18,8 @@ def verify_api_key(
 
     FastAPI injects the parsed Authorization header via the Depends on
     the HTTPBearer security scheme. The token is compared against the
-    list of pre-configured valid keys. This function is meant to be
+    list of pre-configured valid keys using a constant-time comparison
+    to prevent timing side-channel attacks. This function is meant to be
     used as a FastAPI dependency — any route that includes
     ``_token: str = Depends(_auth_dep)`` will reject unauthenticated
     requests automatically.
@@ -39,9 +42,12 @@ def verify_api_key(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Auth not configured",
         )
-    if credentials.credentials not in valid_keys:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-        )
-    return credentials.credentials
+    # Constant-time comparison against each valid key to prevent timing
+    # side-channel attacks that could leak valid key characters.
+    for key in valid_keys:
+        if secrets.compare_digest(credentials.credentials, key):
+            return credentials.credentials
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid API key",
+    )

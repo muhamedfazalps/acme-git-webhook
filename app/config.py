@@ -1,8 +1,11 @@
+import logging
 import os
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class AuthConfig(BaseModel):
@@ -115,4 +118,10 @@ def load_config(path: str | None = None) -> AppConfig:
         path = os.getenv("CONFIG_PATH", "config.yaml")
     with open(path) as f:
         data = yaml.safe_load(f)
-    return AppConfig.model_validate(data)
+    cfg = AppConfig.model_validate(data)
+    if cfg.vault and not cfg.vault.verify:
+        logger.warning(
+            "Vault TLS verification is DISABLED (verify=False) — "
+            "this is insecure and should only be used for development"
+        )
+    return cfg

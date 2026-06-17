@@ -344,4 +344,4 @@ class TestAcmeDeploy:
             headers={"Authorization": "Bearer test-key"},
         )
         assert resp.status_code == 502
-        assert "Vault error" in resp.json()["detail"]
+        assert "Vault operation failed" in resp.json()["detail"]

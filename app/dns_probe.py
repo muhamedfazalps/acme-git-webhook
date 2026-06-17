@@ -1,9 +1,33 @@
+import ipaddress
 import time
 
 import dns.exception
 import dns.name
 import dns.resolver
 import dns.rdatatype
+
+
+def validate_nameserver(ip: str) -> bool:
+    """Check that a nameserver IP is a valid, non-private address.
+
+    Rejects loopback, private (RFC 1918), multicast, link-local,
+    and unspecified addresses to prevent SSRF and DNS amplification
+    attacks via the propagation endpoint.
+
+    Args:
+        ip: The IP address string to validate.
+
+    Returns:
+        True if the address is a valid global unicast IP, False
+        otherwise.
+    """
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    if addr.is_private or addr.is_loopback or addr.is_multicast or addr.is_unspecified:
+        return False
+    return True
 
 
 def _check_single_ns(

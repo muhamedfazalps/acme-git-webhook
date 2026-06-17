@@ -4,15 +4,20 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fasteners import InterProcessLock
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 logger = logging.getLogger(__name__)
 
 from app.auth import verify_api_key
 from app.config import AppConfig, load_config
-from app.dns_probe import check_propagation
+from app.dns_probe import check_propagation, validate_nameserver
 from app.git_handler import clone_or_pull, commit_and_push
 from app.models import AcmeRequest, CertDeployRequest, PropagationRequest
 from app.vault_handler import VaultHandler
@@ -29,6 +34,42 @@ vault_handler: VaultHandler | None = None
 # Reusable FastAPI security scheme that extracts the Bearer token from
 # the Authorization header. It is shared by all protected endpoints.
 security = HTTPBearer()
+
+# Rate limiter keyed by client IP. The middleware enforces the default
+# limit on every endpoint, including health. Use a reverse proxy for
+# stricter per-client enforcement.
+limiter = Limiter(key_func=get_remote_address, default_limits=["30/minute"])
+
+
+def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    """Return a 429 JSON response when the rate limit is exceeded."""
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={"detail": "Rate limit exceeded, try again later"},
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load the YAML configuration and initialise the Vault handler.
+
+    FastAPI calls the lifespan context manager on startup (before any
+    request is accepted) and on shutdown. The config path is read from
+    the CONFIG_PATH environment variable, defaulting to "config.yaml"
+    relative to the working directory.
+    """
+    global config, vault_handler
+    config_path = os.getenv("CONFIG_PATH", "config.yaml")
+    config = load_config(config_path)
+    if config.vault and not config.vault.skip:
+        vault_handler = VaultHandler(config.vault)
+    yield
+
+
+app = FastAPI(title="acme-git-webhook", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware, limiter=limiter)
 
 
 @asynccontextmanager
@@ -184,13 +225,13 @@ def acme_auth(
 
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Acquire a blocking file lock. If the lock is held by another
-    # concurrent request (from a different ACME renewal for instance),
-    # this call blocks until the lock is released. The blocking=True
-    # parameter means we wait — if the lock is never released, the
-    # request will hang until the server timeout.
+    # Acquire a file lock with a 30-second timeout. If the lock is held
+    # by another concurrent request (from a different ACME renewal for
+    # instance), this call blocks up to 30 seconds. If the lock is never
+    # released during that window, we return 423 so the ACME client can
+    # retry rather than hanging indefinitely.
     lock = InterProcessLock(str(lock_path))
-    acquired = lock.acquire(blocking=True)
+    acquired = lock.acquire(blocking=True, timeout=30)
     if not acquired:
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
@@ -258,7 +299,7 @@ def acme_cleanup(
 
     # Same locking logic as acme_auth — see that method for details.
     lock = InterProcessLock(str(lock_path))
-    acquired = lock.acquire(blocking=True)
+    acquired = lock.acquire(blocking=True, timeout=30)
     if not acquired:
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
@@ -308,6 +349,11 @@ def acme_wait_for_propagation(
     until either every nameserver returns the expected validation token
     or the ``timeout`` (default: 120) is reached.
 
+    Nameserver addresses are validated to reject private, loopback,
+    and multicast IPs as a defence against SSRF and DNS amplification
+    attacks. Invalid entries are silently dropped and replaced with
+    safe defaults.
+
     Args:
         req: JSON body containing ``domain``, ``validation``,
             optional ``nameservers``, ``timeout`` and ``poll_interval``.
@@ -321,6 +367,9 @@ def acme_wait_for_propagation(
             - ``elapsed``: seconds elapsed.
     """
     nameservers = req.nameservers or ["8.8.8.8", "1.1.1.1"]
+    nameservers = [ns for ns in nameservers if validate_nameserver(ns)]
+    if not nameservers:
+        nameservers = ["8.8.8.8", "1.1.1.1"]
     result = check_propagation(
         req.domain,
         req.validation,
@@ -403,7 +452,7 @@ def acme_deploy(
         logger.error("Failed to store certificate in Vault: %s", e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Vault error: {e}",
+            detail="Vault operation failed",
         )
 
     return {

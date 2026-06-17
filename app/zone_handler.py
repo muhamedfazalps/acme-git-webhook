@@ -44,6 +44,11 @@ def _resolve_zone_path(
     This lets the same webhook serve domains that belong to different
     zones managed in the same repository.
 
+    The resolved path is validated to stay within the allowed base
+    directory as a defence-in-depth measure against path traversal
+    attacks — even though the ``domain`` field is already validated
+    by a Pydantic regex pattern in ``AcmeRequest``.
+
     Args:
         repos_path: Root of the cloned zone repository.
         domain: Full domain including ``_acme-challenge.`` prefix.
@@ -53,18 +58,19 @@ def _resolve_zone_path(
     Returns:
         Absolute path to the zone file if found, None otherwise.
     """
-    # Normalise the domain by removing the ACME challenge prefix and
-    # any wildcard marker. The remainder is used as the start of the
-    # suffix-based lookup.
+    allowed_base = (repos_path / zone_path).resolve()
     clean = domain.removeprefix("_acme-challenge.").removeprefix("*.")
     labels = clean.split(".")
-    # Walk from the most specific label (e.g. sub.example.com) toward
-    # the most generic (e.g. com) and stop at the first existing file.
     for i in range(len(labels)):
         candidate = ".".join(labels[i:])
         path = repos_path / zone_path / f"{candidate}{suffix}"
         if path.exists():
-            return path
+            resolved = path.resolve()
+            try:
+                resolved.relative_to(allowed_base)
+            except ValueError:
+                continue
+            return resolved
     return None
 
 
@@ -108,29 +114,19 @@ def add_txt_record(
             f"No zone file found for domain '{domain}' in {repos_path / zone_path}"
         )
 
-    # Parse the existing Bind zone file into a dns.zone.Zone object.
     origin = _origin_from_zone_file(zone_file)
     zone = dns.zone.from_file(str(zone_file), origin=origin)
 
-    # Build the absolute DNS name for the ACME challenge TXT record.
-    # The domain already includes the _acme-challenge. prefix as sent
-    # by the ACME client. Appending a trailing dot makes it absolute,
-    # which avoids confusion with the zone's relativization behaviour.
     acme_name = dns.name.from_text(f"{domain}.")
     rdtype = dns.rdatatype.TXT
     rdclass = dns.rdataclass.IN
 
-    # Retrieve any existing RRset for this name, or create a new one.
     rdataset = zone.get_rdataset(acme_name, rdtype)
     if rdataset is None:
         rdataset = dns.rdataset.Rdataset(rdclass, rdtype)
     else:
-        # Clear any previous tokens — we always replace, not append.
-        # This is the safest approach for ACME DNS-01 where the CA
-        # expects exactly one value.
         rdataset.clear()
 
-    # Add the new validation token and write the zone back to disk.
     rdataset.add(TXTBase(rdclass, rdtype, [token.encode()]))
     zone.replace_rdataset(acme_name, rdataset)
     zone.to_file(str(zone_file))
@@ -171,10 +167,6 @@ def remove_txt_record(
     zone = dns.zone.from_file(str(zone_file), origin=origin)
     acme_name = dns.name.from_text(f"{domain}.")
 
-    # Check if the TXT rdataset actually exists before trying to delete.
-    # In dnspython >= 2.8, delete_rdataset on a non-existent name is a
-    # silent no-op, so we must verify presence explicitly to distinguish
-    # between "successfully removed" and "nothing to remove".
     rdataset = zone.get_rdataset(acme_name, dns.rdatatype.TXT)
     if rdataset is None:
         return None

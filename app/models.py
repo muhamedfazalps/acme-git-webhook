@@ -1,4 +1,18 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+
+_ACME_DOMAIN_PATTERN = (
+    r"^_acme-challenge\."
+    r"(\*\.)?"
+    r"([a-zA-Z0-9_-]+\.)*"
+    r"[a-zA-Z0-9-]+$"
+)
+
+_DOMAIN_PATTERN = (
+    r"^(\*\.)?"
+    r"([a-zA-Z0-9_-]+\.)*"
+    r"[a-zA-Z0-9-]+$"
+)
 
 
 class AcmeRequest(BaseModel):
@@ -16,8 +30,8 @@ class AcmeRequest(BaseModel):
             record value. This field is required for auth requests and
             may be omitted for cleanup requests.
     """
-    domain: str
-    validation: str | None = None
+    domain: str = Field(pattern=_ACME_DOMAIN_PATTERN)
+    validation: str | None = Field(default=None, min_length=1, max_length=255)
 
 
 class PropagationRequest(BaseModel):
@@ -39,8 +53,8 @@ class PropagationRequest(BaseModel):
         poll_interval: Seconds between each polling round
             (default: 5).
     """
-    domain: str
-    validation: str
+    domain: str = Field(pattern=_ACME_DOMAIN_PATTERN)
+    validation: str = Field(min_length=1, max_length=255)
     nameservers: list[str] | None = None
     timeout: int = 120
     poll_interval: int = 5
@@ -67,7 +81,7 @@ class CertDeployRequest(BaseModel):
         privkey_pem: PEM-encoded private key. This value is never
             logged or included in the model's representation.
     """
-    domain: str
+    domain: str = Field(pattern=_DOMAIN_PATTERN)
     cert_pem: str
     chain_pem: str | None = None
     fullchain_pem: str
