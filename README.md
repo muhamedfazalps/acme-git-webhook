@@ -54,7 +54,44 @@ trying progressively shorter domain suffixes.
 |---|---|---|---|---|
 | `/health` | GET | No | — | Healthcheck |
 | `/acme/auth` | POST | Bearer | `{ "domain", "validation" }` | Add TXT record |
+| `/acme/wait-for-propagation` | POST | Bearer | `{ "domain", "validation", "nameservers"?, "timeout"?, "poll_interval"? }` | Wait for DNS propagation |
 | `/acme/cleanup` | POST | Bearer | `{ "domain" }` | Remove TXT record |
+
+## Certbot usage
+
+Create a hook script `acme-hook.sh`:
+
+```bash
+#!/bin/bash
+HOOK_URL="https://webhook.example.com:8000"
+API_KEY="sk-XXXXXXXXXXXX"
+
+if [ "$1" = "auth" ]; then
+  curl -s -X POST "$HOOK_URL/acme/auth" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"domain\": \"$CERTBOT_DOMAIN\", \"validation\": \"$CERTBOT_VALIDATION\"}"
+
+  curl -s -X POST "$HOOK_URL/acme/wait-for-propagation" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"domain\": \"$CERTBOT_DOMAIN\", \"validation\": \"$CERTBOT_VALIDATION\", \"timeout\": 120, \"poll_interval\": 5}"
+
+elif [ "$1" = "cleanup" ]; then
+  curl -s -X POST "$HOOK_URL/acme/cleanup" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{\"domain\": \"$CERTBOT_DOMAIN\"}"
+fi
+```
+
+```bash
+chmod +x acme-hook.sh
+certbot certonly --manual --preferred-challenges dns-01 \
+  --manual-auth-hook "./acme-hook.sh auth" \
+  --manual-cleanup-hook "./acme-hook.sh cleanup" \
+  -d example.com -d "*.example.com"
+```
 
 ## Deployment
 

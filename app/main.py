@@ -9,8 +9,9 @@ from fasteners import InterProcessLock
 
 from app.auth import verify_api_key
 from app.config import AppConfig, load_config
+from app.dns_probe import check_propagation
 from app.git_handler import clone_or_pull, commit_and_push
-from app.models import AcmeRequest
+from app.models import AcmeRequest, PropagationRequest
 from app.zone_handler import add_txt_record, remove_txt_record
 
 # Module-level config, populated once at startup via the lifespan hook.
@@ -282,3 +283,48 @@ def acme_cleanup(
             }
     finally:
         lock.release()
+
+
+@app.post("/acme/wait-for-propagation")
+def acme_wait_for_propagation(
+    req: PropagationRequest,
+    _token: str = Depends(_auth_dep),
+):
+    """Poll configured nameservers until the TXT record is propagated.
+
+    Called after ``/acme/auth`` to wait until the newly inserted TXT
+    record is visible on all DNS resolvers. The ACME client should
+    call this endpoint before asking the CA to validate.
+
+    The endpoint polls every ``poll_interval`` seconds (default: 5)
+    until either every nameserver returns the expected validation token
+    or the ``timeout`` (default: 120) is reached.
+
+    Args:
+        req: JSON body containing ``domain``, ``validation``,
+            optional ``nameservers``, ``timeout`` and ``poll_interval``.
+        _token: The validated API key (injected by the auth dependency).
+
+    Returns:
+        A JSON object with:
+            - ``status``: ``"propagated"`` or ``"timeout"``.
+            - ``matched``: list of nameservers that matched.
+            - ``pending``: list of nameservers that never matched.
+            - ``elapsed``: seconds elapsed.
+    """
+    nameservers = req.nameservers or ["8.8.8.8", "1.1.1.1"]
+    result = check_propagation(
+        req.domain,
+        req.validation,
+        nameservers,
+        timeout=req.timeout,
+        poll_interval=req.poll_interval,
+    )
+    status = "propagated" if not result["pending"] else "timeout"
+    return {
+        "status": status,
+        "domain": req.domain,
+        "elapsed": result["elapsed"],
+        "matched": result["matched"],
+        "pending": result["pending"],
+    }

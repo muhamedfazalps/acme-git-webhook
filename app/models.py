@@ -18,3 +18,29 @@ class AcmeRequest(BaseModel):
     """
     domain: str
     validation: str | None = None
+
+
+class PropagationRequest(BaseModel):
+    """Request payload for the DNS propagation check endpoint.
+
+    Sent after ``/acme/auth`` to wait until the TXT record has
+    propagated to all configured or provided nameservers. The endpoint
+    polls until every server returns the expected validation token or
+    the timeout is reached.
+
+    Attributes:
+        domain: The full ACME challenge domain including the
+            ``_acme-challenge.`` prefix.
+        validation: The expected TXT record value to wait for.
+        nameservers: Optional list of nameserver IPs to query.
+            Defaults to ``["8.8.8.8", "1.1.1.1"]`` when not provided.
+        timeout: Maximum time in seconds to keep polling
+            (default: 120).
+        poll_interval: Seconds between each polling round
+            (default: 5).
+    """
+    domain: str
+    validation: str
+    nameservers: list[str] | None = None
+    timeout: int = 120
+    poll_interval: int = 5
