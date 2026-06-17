@@ -1,0 +1,14 @@
+services:
+  webhook:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - /path/to/deploy_key:/run/secrets/deploy_key:ro
+      - webhook_data:/data/acme-git-webhook
+    environment:
+      - CONFIG_PATH=/app/config.yaml
+
+volumes:
+  webhook_data:

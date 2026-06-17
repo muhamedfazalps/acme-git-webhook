@@ -1,0 +1,14 @@
+auth:
+  api_keys:
+    - "sk-XXXXXXXXXXXX"
+
+webhook:
+  bind: "0.0.0.0:8000"
+  work_dir: "/data/acme-git-webhook"
+  ssh_key: "/run/secrets/deploy_key"
+
+repo:
+  url: "git@github.com:org/dns-zones.git"
+  branch: "main"
+  zone_path: "zones"
+  zone_file_suffix: ".zone"
