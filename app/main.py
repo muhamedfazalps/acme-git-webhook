@@ -69,27 +69,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="acme-git-webhook", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.add_middleware(SlowAPIMiddleware, limiter=limiter)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Load the YAML configuration and initialise the Vault handler.
-
-    FastAPI calls the lifespan context manager on startup (before any
-    request is accepted) and on shutdown. The config path is read from
-    the CONFIG_PATH environment variable, defaulting to "config.yaml"
-    relative to the working directory.
-    """
-    global config, vault_handler
-    config_path = os.getenv("CONFIG_PATH", "config.yaml")
-    config = load_config(config_path)
-    if config.vault and not config.vault.skip:
-        vault_handler = VaultHandler(config.vault)
-    yield
-
-
-app = FastAPI(title="acme-git-webhook", lifespan=lifespan)
+app.add_middleware(SlowAPIMiddleware)
 
 
 def _get_config() -> AppConfig:

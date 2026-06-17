@@ -129,6 +129,40 @@ class TestLoadConfig:
         cfg = load_config(str(path))
         assert cfg.vault is None
 
+    def test_load_with_default_path(self, tmp_path, monkeypatch):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            yaml.dump({
+                "auth": {"api_keys": ["sk-test"]},
+                "webhook": {"bind": "0.0.0.0:8000", "work_dir": "/data/foo"},
+                "repo": {"url": "git@github.com:org/dns-zones.git"},
+            })
+        )
+        monkeypatch.chdir(tmp_path)
+        cfg = load_config()
+        assert cfg.auth.api_keys == ["sk-test"]
+
+    def test_load_vault_with_verify_false_warns(self, tmp_path, caplog):
+        import logging
+        caplog.set_level(logging.WARNING)
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            yaml.dump({
+                "auth": {"api_keys": ["sk-test"]},
+                "webhook": {"bind": "0.0.0.0:8000", "work_dir": "/data/foo"},
+                "repo": {"url": "git@github.com:org/dns-zones.git"},
+                "vault": {
+                    "addr": "https://vault.example.com:8200",
+                    "role_id": "role-abc",
+                    "secret_id_path": "/run/secrets/vault_secret_id",
+                    "verify": False,
+                },
+            })
+        )
+        cfg = load_config(str(path))
+        assert cfg.vault.verify is False
+        assert "Vault TLS verification is DISABLED" in caplog.text
+
 
 class TestVaultConfig:
     def test_valid(self):

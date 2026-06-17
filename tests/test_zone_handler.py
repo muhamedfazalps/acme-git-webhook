@@ -55,6 +55,24 @@ class TestResolveZonePath:
         )
         assert result is not None
 
+    def test_path_traversal_rejected(self, tmp_path: Path):
+        zone = tmp_path / "zones" / "example.com.zone"
+        zone.parent.mkdir(parents=True, exist_ok=True)
+        zone.write_text("")
+        # Create a .zone file outside the zones directory to simulate
+        # a traversal attempt that resolves to a valid zone file.
+        outside = tmp_path / "outside" / "example.com.zone"
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        outside.write_text("")
+
+        result = _resolve_zone_path(
+            tmp_path,
+            "_acme-challenge.../../../outside/example.com",
+            "zones",
+            ".zone",
+        )
+        assert result is None
+
 
 class TestAddTxtRecord:
     def test_add_new_record(self, tmp_path: Path, sample_zone: Path):

@@ -99,6 +99,20 @@ class TestAcmeAuth:
         assert "txt123" in zone_content
 
 
+class TestAcmeAuthEdgeCases:
+    def test_auth_invalid_domain_returns_422(self, client: TestClient):
+        payload = {
+            "domain": "not-a-valid-acme-domain",
+            "validation": "abc123",
+        }
+        resp = client.post(
+            "/acme/auth",
+            json=payload,
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 422
+
+
 class TestAcmeCleanup:
     def test_cleanup_after_auth(self, client: TestClient, tmp_path: Path, bare_git_repo: Path):
         auth_payload = {
@@ -213,6 +227,27 @@ class TestAcmeWaitForPropagation:
             )
         assert resp.status_code == 200
         assert resp.json()["matched"] == ["4.4.4.4", "8.8.4.4"]
+
+    def test_propagation_filters_private_ns(self, client: TestClient):
+        """All private/loopback nameservers should be replaced by defaults."""
+        answer = MagicMock()
+        answer.__iter__.return_value = [_make_txt_rdata("val")]
+        payload = {
+            "domain": "_acme-challenge.example.com",
+            "validation": "val",
+            "nameservers": ["127.0.0.1", "10.0.0.1"],
+            "timeout": 10,
+            "poll_interval": 1,
+        }
+        with patch.object(dns.resolver.Resolver, "resolve", return_value=answer):
+            resp = client.post(
+                "/acme/wait-for-propagation",
+                json=payload,
+                headers={"Authorization": "Bearer test-key"},
+            )
+        assert resp.status_code == 200
+        # Should have fallen back to 8.8.8.8, 1.1.1.1
+        assert resp.json()["matched"] == ["8.8.8.8", "1.1.1.1"]
 
 
 class TestAcmeDeploy:
@@ -345,3 +380,102 @@ class TestAcmeDeploy:
         )
         assert resp.status_code == 502
         assert "Vault operation failed" in resp.json()["detail"]
+
+
+class TestAcmeLockTimeout:
+    def test_auth_lock_timeout_returns_423(self, client: TestClient):
+        payload = {
+            "domain": "_acme-challenge.example.com",
+            "validation": "abc123",
+        }
+        with patch("fasteners.InterProcessLock.acquire", return_value=False):
+            resp = client.post(
+                "/acme/auth",
+                json=payload,
+                headers={"Authorization": "Bearer test-key"},
+            )
+        assert resp.status_code == 423
+
+    def test_cleanup_lock_timeout_returns_423(self, client: TestClient):
+        payload = {"domain": "_acme-challenge.example.com"}
+        with patch("fasteners.InterProcessLock.acquire", return_value=False):
+            resp = client.post(
+                "/acme/cleanup",
+                json=payload,
+                headers={"Authorization": "Bearer test-key"},
+            )
+        assert resp.status_code == 423
+
+
+class TestAcmeDeployEdgeCases:
+    def test_deploy_invalid_domain_returns_422(self, client: TestClient):
+        payload = {
+            "domain": "",
+            "cert_pem": "cert",
+            "fullchain_pem": "fullchain",
+            "privkey_pem": "key",
+        }
+        resp = client.post(
+            "/acme/deploy",
+            json=payload,
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 422
+
+    def test_deploy_vault_handler_none_returns_502(self, client: TestClient, tmp_path: Path):
+        secret_id_file = tmp_path / "vault_secret_id"
+        secret_id_file.write_text("test-secret-id")
+
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            vault=VaultConfig(
+                addr="https://vault.example.com:8200",
+                role_id="role-abc",
+                secret_id_path=str(secret_id_file),
+                verify=False,
+                skip=False,
+            ),
+        )
+        m.vault_handler = None
+
+        payload = {
+            "domain": "example.com",
+            "cert_pem": "cert",
+            "fullchain_pem": "fullchain",
+            "privkey_pem": "key",
+        }
+        resp = client.post(
+            "/acme/deploy",
+            json=payload,
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 502
+        assert "Vault handler not initialised" in resp.json()["detail"]
+
+
+class TestAcmeHealth:
+    def test_health_with_rate_limit(self, client: TestClient):
+        for _ in range(5):
+            resp = client.get("/health")
+            assert resp.status_code == 200
+
+
+class TestConfigNotLoaded:
+    def test_config_not_loaded_returns_500(self, client: TestClient):
+        import app.main as m
+        m.config = None
+        resp = client.post(
+            "/acme/auth",
+            json={"domain": "_acme-challenge.example.com", "validation": "x"},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 500
+        assert resp.json()["detail"] == "Config not loaded"

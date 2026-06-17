@@ -6,7 +6,7 @@ import dns.resolver
 import dns.rdtypes.txtbase
 import pytest
 
-from app.dns_probe import _check_single_ns, check_propagation
+from app.dns_probe import _check_single_ns, check_propagation, validate_nameserver
 
 
 def _make_txt_rdata(value: str):
@@ -116,3 +116,35 @@ class TestCheckPropagationEdgeCases:
             )
         # With immediate match, elapsed should be 0 (first poll succeeds).
         assert result["elapsed"] == 0
+
+
+class TestValidateNameserver:
+    def test_public_ip(self):
+        assert validate_nameserver("8.8.8.8") is True
+        assert validate_nameserver("1.1.1.1") is True
+        assert validate_nameserver("4.4.4.4") is True
+
+    def test_private_ip(self):
+        assert validate_nameserver("10.0.0.1") is False
+        assert validate_nameserver("192.168.1.1") is False
+        assert validate_nameserver("172.16.0.1") is False
+
+    def test_loopback(self):
+        assert validate_nameserver("127.0.0.1") is False
+
+    def test_multicast(self):
+        assert validate_nameserver("224.0.0.1") is False
+
+    def test_unspecified(self):
+        assert validate_nameserver("0.0.0.0") is False
+
+    def test_invalid_format(self):
+        assert validate_nameserver("not-an-ip") is False
+        assert validate_nameserver("") is False
+
+    def test_ipv6_public(self):
+        assert validate_nameserver("2001:4860:4860::8888") is True
+
+    def test_ipv6_private(self):
+        assert validate_nameserver("fe80::1") is False
+        assert validate_nameserver("::1") is False
