@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class AcmeRequest(BaseModel):
@@ -44,3 +44,42 @@ class PropagationRequest(BaseModel):
     nameservers: list[str] | None = None
     timeout: int = 120
     poll_interval: int = 5
+
+
+class CertDeployRequest(BaseModel):
+    """Request payload for the certificate deployment endpoint.
+
+    Called by the certbot deploy-hook after a successful renewal so
+    that the webhook can store the certificate securely in Vault.
+
+    The private key is a sensitive field: it is excluded from the
+    model's string representation and from log output.
+
+    Attributes:
+        domain: The primary domain for the certificate (e.g.
+            ``example.com``). For multi-domain certificates, this
+            should be the first domain in the certificate.
+        cert_pem: PEM-encoded leaf certificate.
+        chain_pem: PEM-encoded intermediate chain (optional, may be
+            empty for self-signed certs).
+        fullchain_pem: PEM-encoded leaf certificate concatenated with
+            the intermediate chain.
+        privkey_pem: PEM-encoded private key. This value is never
+            logged or included in the model's representation.
+    """
+    domain: str
+    cert_pem: str
+    chain_pem: str | None = None
+    fullchain_pem: str
+    privkey_pem: str
+
+    model_config = ConfigDict(
+        # Never include privkey_pem in model dumps used for logging.
+        # See model_dump(exclude={"privkey_pem"}) in the endpoint.
+    )
+
+    def model_dump(self, *args, **kwargs):
+        """Override to exclude privkey_pem by default for log safety."""
+        if "exclude" not in kwargs:
+            kwargs["exclude"] = {"privkey_pem"}
+        return super().model_dump(*args, **kwargs)

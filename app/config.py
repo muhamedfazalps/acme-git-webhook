@@ -50,15 +50,47 @@ class RepoConfig(BaseModel):
     zone_file_suffix: str = ".zone"
 
 
+class VaultConfig(BaseModel):
+    """Vault server configuration for secure certificate storage.
+
+    The webhook authenticates to Vault via AppRole and stores
+    Let's Encrypt certificates in the KV secrets engine.
+
+    Attributes:
+        addr: URL of the Vault server (e.g. https://vault.example.com:8200).
+        role_id: AppRole RoleID used for authentication.
+        secret_id_path: Path to a file containing the AppRole SecretID.
+            The file is read at runtime so the SecretID is never baked
+            into the config file.
+        kv_mount: Mount path of the KV secrets engine (default: "secret").
+        certs_path: Base path under which certificates are stored
+            (default: "certs"). The full path becomes
+            ``<kv_mount>/<certs_path>/<domain>/...``.
+        verify: Whether to verify the Vault TLS certificate
+            (default: True).
+        skip: When True, all Vault operations are silently skipped.
+            Useful for local development and tests when no Vault
+            server is available (default: False).
+    """
+    addr: str
+    role_id: str
+    secret_id_path: str
+    kv_mount: str = "secret"
+    certs_path: str = "certs"
+    verify: bool = True
+    skip: bool = False
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration.
 
-    Groups authentication, webhook server and repository settings
-    into a single validated object loaded from config.yaml.
+    Groups authentication, webhook server, repository and Vault
+    settings into a single validated object loaded from config.yaml.
     """
     auth: AuthConfig
     webhook: WebhookConfig
     repo: RepoConfig
+    vault: VaultConfig | None = None
 
 
 def load_config(path: str | None = None) -> AppConfig:

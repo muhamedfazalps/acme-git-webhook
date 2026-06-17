@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,18 +8,23 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fasteners import InterProcessLock
 
+logger = logging.getLogger(__name__)
+
 from app.auth import verify_api_key
 from app.config import AppConfig, load_config
 from app.dns_probe import check_propagation
 from app.git_handler import clone_or_pull, commit_and_push
-from app.models import AcmeRequest, PropagationRequest
+from app.models import AcmeRequest, CertDeployRequest, PropagationRequest
+from app.vault_handler import VaultHandler
 from app.zone_handler import add_txt_record, remove_txt_record
 
-# Module-level config, populated once at startup via the lifespan hook.
-# Using a global is the simplest approach for a single-process uvicorn
-# instance. For multi-worker deployments, the config should be loaded
-# inside each worker's lifespan or passed via a dependency provider.
+# Module-level config and vault handler, populated once at startup via
+# the lifespan hook. Using globals is the simplest approach for a
+# single-process uvicorn instance. For multi-worker deployments, they
+# should be loaded inside each worker's lifespan or passed via a
+# dependency provider.
 config: AppConfig | None = None
+vault_handler: VaultHandler | None = None
 
 # Reusable FastAPI security scheme that extracts the Bearer token from
 # the Authorization header. It is shared by all protected endpoints.
@@ -27,16 +33,18 @@ security = HTTPBearer()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load the YAML configuration once when the application starts.
+    """Load the YAML configuration and initialise the Vault handler.
 
     FastAPI calls the lifespan context manager on startup (before any
     request is accepted) and on shutdown. The config path is read from
     the CONFIG_PATH environment variable, defaulting to "config.yaml"
     relative to the working directory.
     """
-    global config
+    global config, vault_handler
     config_path = os.getenv("CONFIG_PATH", "config.yaml")
     config = load_config(config_path)
+    if config.vault and not config.vault.skip:
+        vault_handler = VaultHandler(config.vault)
     yield
 
 
@@ -327,4 +335,79 @@ def acme_wait_for_propagation(
         "elapsed": result["elapsed"],
         "matched": result["matched"],
         "pending": result["pending"],
+    }
+
+
+@app.post("/acme/deploy")
+def acme_deploy(
+    req: CertDeployRequest,
+    _token: str = Depends(_auth_dep),
+):
+    """Store a successfully-issued certificate in Vault.
+
+    Called by the certbot deploy-hook after a successful renewal.
+    The endpoint receives the PEM-encoded certificate, chain, and
+    private key, then writes them to HashiCorp Vault's KV store for
+    secure distribution.
+
+    The private key is excluded from all log output — the request
+    body is logged at DEBUG level with ``exclude={"privkey_pem"}``.
+
+    If Vault is not configured (``vault: null`` in config.yaml) or
+    ``skip: true``, the endpoint returns a 200 with
+    ``status: "skipped"`` so that the certbot deploy-hook does not
+    fail in development environments.
+
+    Args:
+        req: JSON body containing the PEM certificate material.
+        _token: The validated API key (injected by the auth dependency).
+
+    Returns:
+        A JSON object with the operation status and vault path.
+
+    Raises:
+        HTTPException 502: If the Vault write operation fails.
+    """
+    cfg = _get_config()
+
+    # Log the non-sensitive fields for debugging and audit.
+    logger.debug("Certificate deploy request: %s", req.model_dump())
+
+    if not cfg.vault or cfg.vault.skip:
+        logger.info(
+            "Vault is disabled or not configured, skipping deploy for %s",
+            req.domain,
+        )
+        return {
+            "status": "skipped",
+            "domain": req.domain,
+            "detail": "Vault not configured or skip=true",
+        }
+
+    handler = vault_handler
+    if handler is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Vault handler not initialised",
+        )
+
+    try:
+        vault_path = handler.store_cert(
+            domain=req.domain,
+            cert_pem=req.cert_pem,
+            chain_pem=req.chain_pem,
+            fullchain_pem=req.fullchain_pem,
+            privkey_pem=req.privkey_pem,
+        )
+    except Exception as e:
+        logger.error("Failed to store certificate in Vault: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Vault error: {e}",
+        )
+
+    return {
+        "status": "ok",
+        "domain": req.domain,
+        "vault_path": vault_path,
     }

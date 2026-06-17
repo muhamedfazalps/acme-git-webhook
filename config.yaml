@@ -12,3 +12,12 @@ repo:
   branch: "main"
   zone_path: "zones"
   zone_file_suffix: ".zone"
+
+vault:
+  addr: "https://vault.example.com:8200"
+  role_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  secret_id_path: "/run/secrets/vault_secret_id"
+  kv_mount: "secret"
+  certs_path: "certs"
+  verify: true
+  skip: false

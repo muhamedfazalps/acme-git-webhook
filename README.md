@@ -15,23 +15,25 @@ ACME client (certbot/acme.sh)
         │
         │  POST /acme/auth { domain, validation }
         │  POST /acme/cleanup { domain }
+        │  POST /acme/deploy { domain, cert_pem, ... }
         ▼
 acme-git-webhook
         │
-        │  1. git pull
+        │  1. git pull / Vault store
         │  2. dnspython: update zone file
         │  3. git commit + push
         ▼
-GitHub repository (Bind zone files)
-        │
-        │  CI/CD detects push
-        ▼
-Authoritative DNS servers (rndc reload)
+GitHub repository (Bind zone files)     HashiCorp Vault (KV store)
+        │                                         │
+        │  CI/CD detects push                     │  Services retrieve
+        ▼                                         ▼
+Authoritative DNS servers (rndc reload)    secret/certs/example.com/
 ```
 
-The ACME client calls the webhook twice per certificate:
+The ACME client calls the webhook three times per certificate:
 1. **auth** — injects `_acme-challenge.<domain>. IN TXT "<validation>"` into the zone file and pushes to Git
 2. **cleanup** — removes the TXT record after validation
+3. **deploy** — stores the issued certificate (cert + key + chain) in HashiCorp Vault for secure distribution
 
 ## Configuration
 
@@ -47,20 +49,34 @@ repo:
   branch: "main"
   zone_path: "zones"
   zone_file_suffix: ".zone"
+
+vault:
+  addr: "https://vault.example.com:8200"
+  role_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  secret_id_path: "/run/secrets/vault_secret_id"
+  kv_mount: "secret"
+  certs_path: "certs"
+  verify: true
+  skip: false
 ```
 
 Zone files are named `<zone_name>.zone` (e.g. `example.com.zone`) and
 located under `zone_path`. The webhook resolves the correct zone by
 trying progressively shorter domain suffixes.
 
+Vault AppRole is used for authentication. The `secret_id` is read from
+a file at runtime (never stored in the config file). Mount the file
+as a Docker secret at the path specified by `secret_id_path`.
+
 ## API
 
 | Endpoint | Method | Auth | Body | Description |
-|---|---|---|---|---|
+|---|---|---|---|---|---|
 | `/health` | GET | No | — | Healthcheck |
 | `/acme/auth` | POST | Bearer | `{ "domain", "validation" }` | Add TXT record |
 | `/acme/wait-for-propagation` | POST | Bearer | `{ "domain", "validation", "nameservers"?, "timeout"?, "poll_interval"? }` | Wait for DNS propagation |
 | `/acme/cleanup` | POST | Bearer | `{ "domain" }` | Remove TXT record |
+| `/acme/deploy` | POST | Bearer | `{ "domain", "cert_pem", "chain_pem"?, "fullchain_pem", "privkey_pem" }` | Store certificate in Vault |
 
 ## Certbot usage
 
@@ -87,6 +103,19 @@ elif [ "$1" = "cleanup" ]; then
     -H "Authorization: Bearer $API_KEY" \
     -H "Content-Type: application/json" \
     -d "{\"domain\": \"$CERTBOT_DOMAIN\"}"
+
+elif [ "$1" = "deploy" ]; then
+  FIRST_DOMAIN=$(echo "$RENEWED_DOMAINS" | cut -d' ' -f1)
+  curl -s -X POST "$HOOK_URL/acme/deploy" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"domain\": \"$FIRST_DOMAIN\",
+      \"cert_pem\": $(jq -Rs . < \"$RENEWED_LINEAGE/cert.pem\"),
+      \"chain_pem\": $(jq -Rs . < \"$RENEWED_LINEAGE/chain.pem\"),
+      \"fullchain_pem\": $(jq -Rs . < \"$RENEWED_LINEAGE/fullchain.pem\"),
+      \"privkey_pem\": $(jq -Rs . < \"$RENEWED_LINEAGE/privkey.pem\")
+    }"
 fi
 ```
 
@@ -95,6 +124,7 @@ chmod +x acme-hook.sh
 certbot certonly --manual --preferred-challenges dns-01 \
   --manual-auth-hook "./acme-hook.sh auth" \
   --manual-cleanup-hook "./acme-hook.sh cleanup" \
+  --deploy-hook "./acme-hook.sh deploy" \
   -d example.com -d "*.example.com"
 ```
 

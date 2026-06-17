@@ -9,8 +9,8 @@ import pytest
 from fastapi.testclient import TestClient
 from git import Repo
 
-from app.config import AppConfig, AuthConfig, RepoConfig, WebhookConfig
-from app.main import app, config as global_config
+from app.config import AppConfig, AuthConfig, RepoConfig, VaultConfig, WebhookConfig
+from app.main import app, config as global_config, vault_handler as global_vault
 
 
 def _make_txt_rdata(value: str):
@@ -213,3 +213,135 @@ class TestAcmeWaitForPropagation:
             )
         assert resp.status_code == 200
         assert resp.json()["matched"] == ["4.4.4.4", "8.8.4.4"]
+
+
+class TestAcmeDeploy:
+    def test_deploy_skipped_when_vault_disabled(self, client: TestClient):
+        payload = {
+            "domain": "example.com",
+            "cert_pem": "cert-data",
+            "fullchain_pem": "fullchain-data",
+            "privkey_pem": "key-data",
+        }
+        resp = client.post(
+            "/acme/deploy",
+            json=payload,
+            headers={"Authorization": "Bearer test-key"},
+        )
+        # No vault config in fixture => skipped
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "skipped"
+        assert "Vault not configured" in resp.json()["detail"]
+
+    def test_deploy_with_invalid_key(self, client: TestClient):
+        payload = {
+            "domain": "example.com",
+            "cert_pem": "cert",
+            "fullchain_pem": "fullchain",
+            "privkey_pem": "key",
+        }
+        resp = client.post(
+            "/acme/deploy",
+            json=payload,
+            headers={"Authorization": "Bearer wrong-key"},
+        )
+        assert resp.status_code == 401
+
+    def test_deploy_without_auth_header(self, client: TestClient):
+        payload = {
+            "domain": "example.com",
+            "cert_pem": "cert",
+            "fullchain_pem": "fullchain",
+            "privkey_pem": "key",
+        }
+        resp = client.post("/acme/deploy", json=payload)
+        assert resp.status_code == 401
+
+    def test_deploy_with_vault_enabled(self, client: TestClient, tmp_path: Path):
+        secret_id_file = tmp_path / "vault_secret_id"
+        secret_id_file.write_text("test-secret-id")
+
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            vault=VaultConfig(
+                addr="https://vault.example.com:8200",
+                role_id="role-abc",
+                secret_id_path=str(secret_id_file),
+                verify=False,
+                skip=False,
+            ),
+        )
+        m.vault_handler = MagicMock()
+        m.vault_handler.store_cert.return_value = "secret/certs/example.com"
+
+        payload = {
+            "domain": "example.com",
+            "cert_pem": "cert-data",
+            "chain_pem": "chain-data",
+            "fullchain_pem": "fullchain-data",
+            "privkey_pem": "key-data",
+        }
+        resp = client.post(
+            "/acme/deploy",
+            json=payload,
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["vault_path"] == "secret/certs/example.com"
+        m.vault_handler.store_cert.assert_called_once_with(
+            domain="example.com",
+            cert_pem="cert-data",
+            chain_pem="chain-data",
+            fullchain_pem="fullchain-data",
+            privkey_pem="key-data",
+        )
+
+    def test_deploy_vault_error_returns_502(self, client: TestClient, tmp_path: Path):
+        secret_id_file = tmp_path / "vault_secret_id"
+        secret_id_file.write_text("test-secret-id")
+
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            vault=VaultConfig(
+                addr="https://vault.example.com:8200",
+                role_id="role-abc",
+                secret_id_path=str(secret_id_file),
+                verify=False,
+                skip=False,
+            ),
+        )
+        mock_handler = MagicMock()
+        mock_handler.store_cert.side_effect = Exception("Vault connection refused")
+        m.vault_handler = mock_handler
+
+        payload = {
+            "domain": "example.com",
+            "cert_pem": "cert",
+            "fullchain_pem": "fullchain",
+            "privkey_pem": "key",
+        }
+        resp = client.post(
+            "/acme/deploy",
+            json=payload,
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 502
+        assert "Vault error" in resp.json()["detail"]
