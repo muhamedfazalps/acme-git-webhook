@@ -2,7 +2,11 @@ VENV = /tmp/acme-test-venv
 PYTHON = $(VENV)/bin/python3
 PYTEST = $(VENV)/bin/pytest
 
-.PHONY: all test lint check docker-build clean venv
+IMAGE = ghcr.io/ckyvra/acme-git-webhook
+GIT_SHA = $(shell git rev-parse --short HEAD)
+TAG ?= latest
+
+.PHONY: all test lint check docker-build docker-push docker-push-sha clean venv
 
 all: test lint
 
@@ -19,7 +23,15 @@ lint: venv
 check: venv lint test
 
 docker-build:
-	docker compose build
+	docker build -t $(IMAGE):$(TAG) .
+
+docker-push: docker-build
+	docker push $(IMAGE):$(TAG)
+
+docker-push-sha: docker-build
+	docker tag $(IMAGE):$(TAG) $(IMAGE):$(GIT_SHA)
+	docker push $(IMAGE):$(GIT_SHA)
+	docker push $(IMAGE):$(TAG)
 
 clean:
 	rm -rf $(VENV)
