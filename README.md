@@ -195,6 +195,55 @@ docker compose up --build
 Mount your SSH deploy key at `/run/secrets/deploy_key` and set the
 `CONFIG_PATH` environment variable if needed.
 
+## GlobalSign Atlas (alternative CA)
+
+GlobalSign requires **External Account Binding (EAB)** for its ACME service.
+Register once, then renew automatically.
+
+### 1. Generate EAB credentials
+
+1. Log in to [Atlas portal](https://atlas.globalsign.com)
+2. Go to **API Credentials** → **Request an ACME MAC**
+3. Copy the displayed **KID** and **HMAC key**
+
+### 2. Register the ACME account (one-time)
+
+```bash
+./scripts/register-acme.sh <eab-kid> <eab-hmac-key> admin@example.com
+```
+
+This runs `certbot register` with the GlobalSign endpoint and stores
+the account in `/data/acme-git-webhook/letsencrypt/accounts/`.
+
+### 3. Issue the first certificate
+
+```bash
+certbot certonly \
+  --manual --preferred-challenges dns-01 \
+  --manual-auth-hook 'curl -X POST http://localhost:8000/acme/auth -H "Authorization: Bearer <key>" -H "Content-Type: application/json" -d "{\"domain\": \"$CERTBOT_DOMAIN\", \"validation\": \"$CERTBOT_VALIDATION\"}"' \
+  --manual-cleanup-hook 'curl -X POST http://localhost:8000/acme/cleanup -H "Authorization: Bearer <key>" -H "Content-Type: application/json" -d "{\"domain\": \"$CERTBOT_DOMAIN\"}"' \
+  --deploy-hook /opt/deploy-hook.sh \
+  --server https://emea.acme.atlas.globalsign.com/directory \
+  --config-dir /data/acme-git-webhook/letsencrypt \
+  -d example.com -d "*.example.com"
+```
+
+### 4. Automatic renewal
+
+Once registered, certbot renews without EAB. Enable in `config.yaml`:
+
+```yaml
+monitor:
+  renew_command: >
+    certbot renew --cert-name {domain}
+    --server https://emea.acme.atlas.globalsign.com/directory
+    --deploy-hook /opt/deploy-hook.sh
+    --config-dir /data/acme-git-webhook/letsencrypt
+    --work-dir /tmp/certbot-work
+    --logs-dir /tmp/certbot-logs
+  renew_threshold: 14
+```
+
 ## Development
 
 ```bash

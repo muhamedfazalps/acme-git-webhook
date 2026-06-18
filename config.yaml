@@ -67,5 +67,7 @@ vault:
 #   warn_days: [60, 30, 14, 7, 3, 1]  # Thresholds (descending order)
 #   alert_webhook_url: "https://hooks.slack.com/services/xxx"
 #   renew_command: "certbot renew --cert-name {domain} --deploy-hook /opt/deploy-hook.sh --config-dir /data/acme-git-webhook/letsencrypt --work-dir /tmp/certbot-work --logs-dir /tmp/certbot-logs"
+#   # GlobalSign example (requires EAB registration first, see scripts/register-acme.sh):
+#   # renew_command: "certbot renew --cert-name {domain} --server https://emea.acme.atlas.globalsign.com/directory --deploy-hook /opt/deploy-hook.sh --config-dir /data/acme-git-webhook/letsencrypt --work-dir /tmp/certbot-work --logs-dir /tmp/certbot-logs"
 #   renew_timeout: 300                # Max seconds for renewal command
 #   renew_threshold: 14               # Days before expiry to auto-renew
