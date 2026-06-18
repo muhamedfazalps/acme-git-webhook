@@ -115,6 +115,16 @@ class TestF5HostHandler:
             profiles = handler._find_ssl_profiles_for_domain("example.com")
         assert profiles == []
 
+    def test_find_ssl_profiles_wildcard(self, handler):
+        mock_resp = {
+            "items": [
+                {"name": "wildcard-ssl", "cert": "/Common/wildcard.example.com", "key": "/Common/wildcard.example.com"},
+            ]
+        }
+        with patch.object(handler, "_api_get", return_value=mock_resp):
+            profiles = handler._find_ssl_profiles_for_domain("*.example.com")
+        assert profiles == ["wildcard-ssl"]
+
     def test_update_profile_cert(self, handler):
         with patch.object(handler, "_api_put") as mock_put:
             handler._update_profile_cert("example-ssl", "/Common/example.com", "/Common/example.com")

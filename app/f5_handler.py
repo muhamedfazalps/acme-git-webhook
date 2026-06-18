@@ -88,9 +88,10 @@ class F5HostHandler:
             logger.warning("F5: failed to list SSL profiles on %s", self.config.addr)
             return []
         profiles = []
+        sanitized = _sanitize_name(domain).lower()
         for item in resp.get("items", []):
             cert_ref = (item.get("cert") or "").lower()
-            if domain.lower() in cert_ref or cert_ref == "none":
+            if domain.lower() in cert_ref or sanitized in cert_ref or cert_ref == "none":
                 profiles.append(item["name"])
         return profiles
 
