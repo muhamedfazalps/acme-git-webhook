@@ -260,39 +260,37 @@ pip install -r dev-requirements.txt
 pytest -v
 ```
 
-## Kubernetes deployment example
+## Helm chart
 
-Complete manifests are in `kubernetes/`. Quick start:
+A Helm chart is available in `helm/`. Quick start:
 
 ```bash
-# 1. Edit placeholders (repo URL, credentials, domain)
-vim kubernetes/secret.yaml
-vim kubernetes/configmap.yaml
-vim kubernetes/certbot-init-job.yaml
+# 1. Edit values.yaml with your configuration
+vim helm/values.yaml
 
-# 2. Deploy everything
-kubectl apply -k kubernetes/
+# 2. Install the chart
+helm install acme-webhook ./helm
 
-# 3. One-time GlobalSign ACME registration
-kubectl apply -f kubernetes/certbot-init-job.yaml
-kubectl wait --for=condition=complete job/acme-certbot-init --timeout=60s
-kubectl delete -f kubernetes/certbot-init-job.yaml
+# 3. Watch the one-time ACME registration job complete
+kubectl wait --for=condition=complete job/acme-webhook-acme-git-webhook-certbot-init --timeout=60s
 
 # 4. Verify
-kubectl get pods -n acme-webhook
+kubectl get pods -l app.kubernetes.io/instance=acme-webhook
 ```
 
-The deployment includes:
+### values.yaml overview
 
-| Resource | Description |
-|----------|-------------|
-| `Deployment` | 1 replica, webhook + certbot in the same image |
-| `Service` | ClusterIP `:8000` |
-| `Ingress` | TLS via cert-manager |
-| `ConfigMap` | Full `config.yaml` with GlobalSign renew |
-| `Secret` | SSH deploy key, API key, Vault secret ID, F5 password |
-| `PVC` | 1Gi RWO for certbot state (`/data/acme-git-webhook`) |
-| `Job` (one-shot) | Registers ACME account via `scripts/register-acme.sh` |
+| Section | Key features |
+|---------|-------------|
+| `webhook.apiKey` | Bearer token for ACME client calls |
+| `repo.*` | Git repository URL, branch, zone path, SSH deploy key |
+| `vault.*` | HashiCorp Vault address, AppRole credentials, verify |
+| `dns.*` | Nameservers, timeout, auto-propagation on/off |
+| `f5.*` | Big-IP hosts (addr, username, password, verify) |
+| `monitor.*` | Check interval, warning thresholds, renew command |
+| `acme.*` | GlobalSign EAB credentials (one-time registration) |
+| `ingress.*` | Hostname, ingress class, cert-manager issuer |
+| `persistence.*` | PVC size and access mode |
 
 ## License
 

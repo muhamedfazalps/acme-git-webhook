@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "webhook.fullname" . }}
+  labels: {{ include "webhook.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{ include "webhook.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{ include "webhook.selectorLabels" . | nindent 8 }}
+    spec:
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "webhook.fullname" . }}-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "webhook.fullname" . }}-data
+        - name: deploy-key
+          secret:
+            secretName: {{ include "webhook.fullname" . }}
+            items:
+              - key: deploy_key
+                path: deploy_key
+                mode: 0400
+        {{- if .Values.vault.enabled }}
+        - name: vault-secret-id
+          secret:
+            secretName: {{ include "webhook.fullname" . }}
+            items:
+              - key: vault_secret_id
+                path: vault_secret_id
+                mode: 0400
+        {{- end }}
+        {{- if .Values.f5.enabled }}
+        - name: f5-password
+          secret:
+            secretName: {{ include "webhook.fullname" . }}
+            items:
+              - key: f5_password
+                path: f5_password
+                mode: 0400
+        {{- end }}
+
+      containers:
+        - name: webhook
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+              name: http
+              protocol: TCP
+
+          env:
+            - name: CONFIG_PATH
+              value: /app/config.yaml
+            - name: ACME_WEBHOOK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "webhook.fullname" . }}
+                  key: api_key
+            - name: ACME_WEBHOOK_URL
+              value: "http://localhost:8000"
+            - name: GIT_SSH_COMMAND
+              value: "ssh -i /run/secrets/deploy_key -o StrictHostKeyChecking=no"
+
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+            - name: data
+              mountPath: /data/acme-git-webhook
+            - name: deploy-key
+              mountPath: /run/secrets/deploy_key
+              subPath: deploy_key
+            {{- if .Values.vault.enabled }}
+            - name: vault-secret-id
+              mountPath: /run/secrets/vault_secret_id
+              subPath: vault_secret_id
+            {{- end }}
+            {{- if .Values.f5.enabled }}
+            - name: f5-password
+              mountPath: /run/secrets/f5_password
+              subPath: f5_password
+            {{- end }}
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          resources: {{ toYaml .Values.resources | nindent 12 }}

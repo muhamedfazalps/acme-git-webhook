@@ -1,0 +1,64 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "webhook.fullname" . }}-config
+  labels: {{ include "webhook.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    auth:
+      api_keys:
+        - {{ .Values.webhook.apiKey | quote }}
+
+    webhook:
+      work_dir: "/data/acme-git-webhook/work"
+
+    repo:
+      url: {{ .Values.repo.url | quote }}
+      branch: {{ .Values.repo.branch | quote }}
+      zone_path: {{ .Values.repo.zonePath | quote }}
+      zone_file_suffix: {{ .Values.repo.zoneFileSuffix | quote }}
+
+    {{- if .Values.vault.enabled }}
+    vault:
+      addr: {{ .Values.vault.addr | quote }}
+      role_id: {{ .Values.vault.roleId | quote }}
+      secret_id_path: "/run/secrets/vault_secret_id"
+      kv_mount: {{ .Values.vault.kvMount | quote }}
+      certs_path: {{ .Values.vault.certsPath | quote }}
+      verify: {{ .Values.vault.verify }}
+      skip: false
+    {{- end }}
+
+    {{- if .Values.dns.enabled }}
+    dns:
+      nameservers: {{ toYaml .Values.dns.nameservers | nindent 6 }}
+      timeout: {{ .Values.dns.timeout }}
+      poll_interval: {{ .Values.dns.pollInterval }}
+      wait_for_propagation: {{ .Values.dns.waitForPropagation }}
+    {{- end }}
+
+    {{- if .Values.f5.enabled }}
+    f5:
+      hosts:
+        {{- range .Values.f5.hosts }}
+        - addr: {{ .addr | quote }}
+          username: {{ .username | quote }}
+          password_path: "/run/secrets/f5_password"
+          verify: {{ .verify }}
+        {{- end }}
+    {{- end }}
+
+    {{- if .Values.monitor.enabled }}
+    monitor:
+      check_interval_hours: {{ .Values.monitor.checkIntervalHours }}
+      warn_days: {{ toYaml .Values.monitor.warnDays | nindent 6 }}
+      {{- if .Values.monitor.alertWebhookUrl }}
+      alert_webhook_url: {{ .Values.monitor.alertWebhookUrl | quote }}
+      {{- else }}
+      alert_webhook_url: null
+      {{- end }}
+      renew_command: |-
+        {{- .Values.monitor.renewCommand | nindent 8 }}
+      renew_timeout: {{ .Values.monitor.renewTimeout }}
+      renew_threshold: {{ .Values.monitor.renewThreshold }}
+    {{- end }}

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: acme-git-webhook
+description: ACME DNS-01 webhook with certbot, F5 Big-IP, and GlobalSign Atlas
+type: application
+version: 0.1.0
+appVersion: latest
+keywords:
+  - acme
+  - certbot
+  - dns-01
+  - globalsign
+  - f5
+  - big-ip
+maintainers:
+  - name: ckyvra
+    url: https://github.com/ckyvra/acme-git-webhook

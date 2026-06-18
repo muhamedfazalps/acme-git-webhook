@@ -1,0 +1,118 @@
+# ── Global ──────────────────────────────────────────────────────────
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/ckyvra/acme-git-webhook
+  tag: latest
+  pullPolicy: Always
+
+# ── Authentication ─────────────────────────────────────────────────
+
+webhook:
+  apiKey: "changeme-acme-webhook-api-key"
+
+# ── Git repository (Bind zone files) ───────────────────────────────
+
+repo:
+  url: "git@github.com:your-org/dns-zones.git"
+  branch: "main"
+  zonePath: "zones"
+  zoneFileSuffix: ".zone"
+  # SSH deploy key with write access to the repository
+  deployKey: |
+    -----BEGIN OPENSSH PRIVATE KEY-----
+    changeme
+    -----END OPENSSH PRIVATE KEY-----
+
+# ── HashiCorp Vault (optional) ─────────────────────────────────────
+
+vault:
+  enabled: true
+  addr: "https://vault.example.com:8200"
+  roleId: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  secretId: "changeme-vault-secret-id"
+  kvMount: "secret"
+  certsPath: "certs"
+  verify: true
+
+# ── DNS propagation (optional) ─────────────────────────────────────
+
+dns:
+  enabled: true
+  nameservers:
+    - "8.8.8.8"
+    - "1.1.1.1"
+  timeout: 120
+  pollInterval: 5
+  waitForPropagation: true
+
+# ── F5 Big-IP (optional) ───────────────────────────────────────────
+
+f5:
+  enabled: true
+  hosts:
+    - addr: "https://bigip.example.com"
+      username: "admin"
+      password: "changeme-f5-password"
+      verify: true
+
+# ── Certificate monitor & auto-renewal (optional) ──────────────────
+
+monitor:
+  enabled: true
+  checkIntervalHours: 24
+  warnDays: [60, 30, 14, 7, 3, 1]
+  alertWebhookUrl: ""
+  renewCommand: |
+    certbot renew --cert-name {domain}
+    --server https://emea.acme.atlas.globalsign.com/directory
+    --deploy-hook /opt/deploy-hook.sh
+    --config-dir /data/acme-git-webhook/letsencrypt
+    --work-dir /tmp/certbot-work
+    --logs-dir /tmp/certbot-logs
+  renewTimeout: 300
+  renewThreshold: 14
+
+# ── ACME initial registration (one-time) ───────────────────────────
+# GlobalSign requires External Account Binding (EAB).
+# Obtain EAB KID and HMAC key from Atlas → API Credentials.
+# Leave both empty to skip the registration job.
+
+acme:
+  eabKid: ""
+  eabHmacKey: ""
+  email: "admin@example.com"
+  server: "https://emea.acme.atlas.globalsign.com/directory"
+
+# ── Ingress ────────────────────────────────────────────────────────
+
+ingress:
+  enabled: true
+  host: "acme-webhook.example.com"
+  className: "nginx"
+  tls:
+    enabled: true
+    clusterIssuer: "letsencrypt-prod"
+
+# ── Persistence ────────────────────────────────────────────────────
+
+persistence:
+  size: 1Gi
+  accessMode: ReadWriteOnce
+
+# ── Service ────────────────────────────────────────────────────────
+
+service:
+  port: 8000
+  type: ClusterIP
+
+# ── Resources ──────────────────────────────────────────────────────
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"

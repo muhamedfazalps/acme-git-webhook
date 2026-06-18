@@ -1,0 +1,36 @@
+{{- if and .Values.acme.eabKid .Values.acme.eabHmacKey }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "webhook.fullname" . }}-certbot-init
+  labels: {{ include "webhook.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "webhook.fullname" . }}-data
+
+      containers:
+        - name: certbot
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command:
+            - /bin/bash
+            - /app/scripts/register-acme.sh
+          args:
+            - {{ .Values.acme.eabKid | quote }}
+            - {{ .Values.acme.eabHmacKey | quote }}
+            - {{ .Values.acme.email | quote }}
+          env:
+            - name: GIT_SSH_COMMAND
+              value: "ssh -i /run/secrets/deploy_key -o StrictHostKeyChecking=no"
+          volumeMounts:
+            - name: data
+              mountPath: /data/acme-git-webhook
+{{- end }}
