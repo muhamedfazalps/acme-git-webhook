@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
+import subprocess
 from datetime import datetime, timezone
 
 import httpx
@@ -26,6 +28,7 @@ class CertMonitor:
         self._scheduler: BackgroundScheduler | None = None
         self._sent_warnings: dict[str, set[int]] = {}
         self._latest_status: list[dict] = []
+        self._renewing: set[str] = set()
 
     def _load_certs_from_vault(self) -> list[dict]:
         if self._vault is None:
@@ -87,6 +90,32 @@ class CertMonitor:
         except Exception:
             logger.warning("CertMonitor: failed to send webhook alert for %s", domain, exc_info=True)
 
+    def _run_renew(self, domain: str) -> None:
+        if self.config is None or not self.config.renew_command:
+            return
+        cmd = self.config.renew_command.replace("{domain}", domain)
+        logger.info("CertMonitor: renewing %s via %s", domain, cmd)
+        try:
+            result = subprocess.run(
+                shlex.split(cmd),
+                timeout=self.config.renew_timeout,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            logger.info(
+                "CertMonitor: renewal succeeded for %s\n%s",
+                domain,
+                result.stdout.strip(),
+            )
+        except subprocess.TimeoutExpired:
+            logger.error("CertMonitor: renewal timed out for %s", domain)
+        except subprocess.CalledProcessError as e:
+            logger.error(
+                "CertMonitor: renewal failed for %s (rc=%d): %s",
+                domain, e.returncode, e.stderr.strip(),
+            )
+
     def _check_day_threshold(self, domain: str, days_left: int) -> None:
         if self.config is None:
             return
@@ -102,6 +131,14 @@ class CertMonitor:
                     )
                     self._send_webhook_alert(domain, days_left)
                     sent.add(threshold)
+
+        if (
+            self.config.renew_command
+            and days_left <= self.config.renew_threshold
+            and domain not in self._renewing
+        ):
+            self._renewing.add(domain)
+            self._run_renew(domain)
 
     def run_check(self) -> list[dict]:
         certs = self._load_certs_from_vault()

@@ -21,7 +21,7 @@ from app.config import AppConfig, load_config
 from app.dns_probe import check_propagation, validate_nameserver
 from app.f5_handler import F5Handler
 from app.git_handler import clone_or_pull, commit_and_push
-from app.models import AcmeRequest, CertDeployRequest, PropagationRequest
+from app.models import AcmeRequest, CertDeployRequest, PropagationRequest, RenewRequest
 from app.vault_handler import VaultHandler
 from app.zone_handler import add_txt_record, remove_txt_record
 
@@ -179,6 +179,30 @@ def certs_status(
     if monitor is None:
         return {"certs": [], "detail": "Monitoring not configured"}
     return {"certs": monitor.get_status()}
+
+
+@app.post("/acme/renew")
+def acme_renew(
+    req: RenewRequest,
+    _token: str = Depends(_auth_dep),
+):
+    """Trigger immediate certificate renewal for a domain.
+
+    Executes the configured ``renew_command`` with ``{domain}`` replaced
+    by the request domain. The command (e.g. ``certbot renew``) is
+    expected to call back the webhook endpoints for the DNS-01 challenge
+    and finally ``/acme/deploy`` to store the new certificate.
+
+    Returns 400 if no renewal command is configured.
+    """
+    monitor = cert_monitor
+    if not monitor or not monitor.config or not monitor.config.renew_command:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Renewal not configured (monitor.renew_command)",
+        )
+    monitor._run_renew(req.domain)
+    return {"status": "ok", "domain": req.domain}
 
 
 @app.get("/health")

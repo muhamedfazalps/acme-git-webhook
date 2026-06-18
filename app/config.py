@@ -107,6 +107,9 @@ class MonitorConfig(BaseModel):
     warn_days: list[int] = [60, 30, 14, 7, 3, 1]
     alert_webhook_url: str | None = None
     alert_webhook_headers: dict[str, str] | None = None
+    renew_command: str | None = None
+    renew_timeout: int = 300
+    renew_threshold: int = 14
 
 
 class AppConfig(BaseModel):

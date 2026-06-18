@@ -923,6 +923,101 @@ class TestAcmeWaitForPropagationWithConfig:
         assert resp.json()["matched"] == ["4.4.4.4"]
 
 
+class TestAcmeRenew:
+    def test_renew_success(self, client: TestClient, tmp_path: Path):
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            monitor=MonitorConfig(renew_command="echo renew {domain}"),
+        )
+        mock_monitor = MagicMock()
+        m.cert_monitor = mock_monitor
+
+        resp = client.post(
+            "/acme/renew",
+            json={"domain": "example.com"},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok", "domain": "example.com"}
+        mock_monitor._run_renew.assert_called_once_with("example.com")
+
+    def test_renew_not_configured(self, client: TestClient, tmp_path: Path):
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+        )
+        m.cert_monitor = MagicMock()
+        m.cert_monitor.config = MonitorConfig(renew_command=None)
+
+        resp = client.post(
+            "/acme/renew",
+            json={"domain": "example.com"},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 400
+        assert "Renewal not configured" in resp.json()["detail"]
+
+    def test_renew_monitor_none(self, client: TestClient, tmp_path: Path):
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+        )
+        m.cert_monitor = None
+
+        resp = client.post(
+            "/acme/renew",
+            json={"domain": "example.com"},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 400
+        assert "Renewal not configured" in resp.json()["detail"]
+
+    def test_renew_with_invalid_key(self, client: TestClient):
+        resp = client.post(
+            "/acme/renew",
+            json={"domain": "example.com"},
+            headers={"Authorization": "Bearer wrong-key"},
+        )
+        assert resp.status_code == 401
+
+    def test_renew_without_auth(self, client: TestClient):
+        resp = client.post(
+            "/acme/renew",
+            json={"domain": "example.com"},
+        )
+        assert resp.status_code == 401
+
+    def test_renew_invalid_domain_returns_422(self, client: TestClient):
+        resp = client.post(
+            "/acme/renew",
+            json={"domain": ""},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 422
+
+
 class TestConfigNotLoaded:
     def test_config_not_loaded_returns_500(self, client: TestClient):
         import app.main as m

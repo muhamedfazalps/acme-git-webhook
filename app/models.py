@@ -60,6 +60,18 @@ class PropagationRequest(BaseModel):
     poll_interval: int | None = None
 
 
+class RenewRequest(BaseModel):
+    """Request payload for the certificate renewal endpoint.
+
+    Called by POST /acme/renew to trigger a renewal for a domain.
+
+    Attributes:
+        domain: The domain whose certificate should be renewed
+            (e.g. ``example.com``).
+    """
+    domain: str = Field(pattern=_DOMAIN_PATTERN)
+
+
 class CertDeployRequest(BaseModel):
     """Request payload for the certificate deployment endpoint.
 

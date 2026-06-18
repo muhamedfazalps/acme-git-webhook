@@ -317,3 +317,94 @@ class TestCertMonitorStartStop:
             with caplog.at_level("INFO"):
                 monitor.start()
             assert "CertMonitor: started (interval=12h)" in caplog.text
+
+
+class TestCertMonitorRenew:
+    def test_run_renew_noop_when_no_command(self, caplog):
+        config = MonitorConfig(renew_command=None)
+        monitor = CertMonitor(config, None)
+        with caplog.at_level("INFO"):
+            monitor._run_renew("example.com")
+        assert "renewing" not in caplog.text
+
+    def test_run_renew_success(self, caplog):
+        config = MonitorConfig(renew_command="echo renewing {domain}")
+        monitor = CertMonitor(config, None)
+        with caplog.at_level("INFO"):
+            monitor._run_renew("example.com")
+        assert "renewal succeeded for example.com" in caplog.text
+        assert "CertMonitor: renewing example.com" in caplog.text
+        assert "{domain}" not in caplog.text  # Vérifie que {domain} a été remplacé
+
+    def test_run_renew_timeout(self, caplog):
+        config = MonitorConfig(renew_command="sleep 10", renew_timeout=1)
+        monitor = CertMonitor(config, None)
+        with caplog.at_level("ERROR"):
+            monitor._run_renew("example.com")
+        assert "renewal timed out for example.com" in caplog.text
+
+    def test_run_renew_failure(self, caplog):
+        config = MonitorConfig(renew_command="false")
+        monitor = CertMonitor(config, None)
+        with caplog.at_level("ERROR"):
+            monitor._run_renew("example.com")
+        assert "renewal failed for example.com" in caplog.text
+
+    def test_run_renew_no_duplicate(self):
+        config = MonitorConfig(
+            renew_command="echo renewing {domain}",
+            renew_threshold=30,
+            warn_days=[60],
+        )
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": ["example.com/"]}
+        }
+        vault._client.secrets.kv.v2.read_secret_version.return_value = {
+            "data": {
+                "data": {
+                    "metadata": (
+                        '{"domain": "example.com", "expiry": "'
+                        + _expiry_iso(20)
+                        + '", "stored_at": "2025-01-01T00:00:00+00:00"}'
+                    )
+                }
+            }
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(config, vault)
+        with patch.object(monitor, "_run_renew") as mock_renew:
+            monitor.run_check()
+            monitor.run_check()
+            mock_renew.assert_called_once_with("example.com")
+
+    def test_renew_threshold_not_reached(self):
+        config = MonitorConfig(
+            renew_command="echo renew",
+            renew_threshold=7,
+            warn_days=[60],
+        )
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": ["example.com/"]}
+        }
+        vault._client.secrets.kv.v2.read_secret_version.return_value = {
+            "data": {
+                "data": {
+                    "metadata": (
+                        '{"domain": "example.com", "expiry": "'
+                        + _expiry_iso(20)
+                        + '", "stored_at": "2025-01-01T00:00:00+00:00"}'
+                    )
+                }
+            }
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(config, vault)
+        with patch.object(monitor, "_run_renew") as mock_renew:
+            monitor.run_check()
+            mock_renew.assert_not_called()
