@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from git import Repo
 
-from app.config import AppConfig, AuthConfig, RepoConfig, VaultConfig, WebhookConfig
+from app.config import AppConfig, AuthConfig, DnsConfig, F5Config, F5HostConfig, MonitorConfig, RepoConfig, VaultConfig, WebhookConfig
 from app.main import app, config as global_config, vault_handler as global_vault
 
 
@@ -64,6 +64,47 @@ class TestAcmeAuth:
         data = resp.json()
         assert data["status"] == "ok"
         assert data["domain"] == "_acme-challenge.example.com"
+
+    def test_auth_fallback_nameservers_with_dns_config(self, client: TestClient, tmp_path: Path, bare_git_repo: Path):
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(bare_git_repo),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            dns=DnsConfig(
+                nameservers=["127.0.0.1", "10.0.0.1"],
+                timeout=10,
+                poll_interval=1,
+                wait_for_propagation=True,
+            ),
+        )
+
+        payload = {
+            "domain": "_acme-challenge.example.com",
+            "validation": "abc123",
+        }
+
+        with patch("app.main.check_propagation") as mock_check:
+            mock_check.return_value = {
+                "matched": ["8.8.8.8", "1.1.1.1"],
+                "pending": [],
+                "elapsed": 1,
+            }
+            resp = client.post(
+                "/acme/auth",
+                json=payload,
+                headers={"Authorization": "Bearer test-key"},
+            )
+
+        assert resp.status_code == 200
+        mock_check.assert_called_once()
+        args, kwargs = mock_check.call_args
+        assert args[2] == ["8.8.8.8", "1.1.1.1"]
 
     def test_auth_with_invalid_key(self, client: TestClient):
         payload = {"domain": "_acme-challenge.example.com", "validation": "x"}
@@ -466,6 +507,420 @@ class TestAcmeHealth:
         for _ in range(5):
             resp = client.get("/health")
             assert resp.status_code == 200
+
+
+
+
+class TestCertsStatus:
+    def test_status_not_configured(self, client: TestClient):
+        resp = client.get(
+            "/certs/status",
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"certs": [], "detail": "Monitoring not configured"}
+
+    def test_status_with_monitor(self, client: TestClient, tmp_path: Path):
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            monitor=MonitorConfig(
+                check_interval_hours=24,
+                warn_days=[60, 30],
+                alert_webhook_url=None,
+            ),
+        )
+        mock_monitor = MagicMock()
+        mock_monitor.get_status.return_value = [
+            {"domain": "example.com", "days_left": 45, "expiry": "2030-01-01T00:00:00+00:00"},
+        ]
+        m.cert_monitor = mock_monitor
+
+        resp = client.get(
+            "/certs/status",
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "certs": [{"domain": "example.com", "days_left": 45, "expiry": "2030-01-01T00:00:00+00:00"}],
+        }
+
+    def test_status_without_auth(self, client: TestClient):
+        resp = client.get("/certs/status")
+        assert resp.status_code == 401
+
+
+class TestAcmeAuthWithDnsConfig:
+    def test_auth_with_auto_propagation(self, client: TestClient, tmp_path: Path, bare_git_repo: Path):
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(bare_git_repo),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            dns=DnsConfig(
+                nameservers=["8.8.8.8", "1.1.1.1"],
+                timeout=10,
+                poll_interval=1,
+                wait_for_propagation=True,
+            ),
+        )
+
+        payload = {
+            "domain": "_acme-challenge.example.com",
+            "validation": "abc123",
+        }
+
+        with patch("app.main.check_propagation") as mock_check:
+            mock_check.return_value = {
+                "matched": ["8.8.8.8", "1.1.1.1"],
+                "pending": [],
+                "elapsed": 2,
+            }
+            resp = client.post(
+                "/acme/auth",
+                json=payload,
+                headers={"Authorization": "Bearer test-key"},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["propagation"] == "propagated"
+        assert data["propagation_matched"] == ["8.8.8.8", "1.1.1.1"]
+        assert data["propagation_pending"] == []
+        assert data["propagation_elapsed"] == 2
+
+    def test_auth_with_auto_propagation_timeout(self, client: TestClient, tmp_path: Path, bare_git_repo: Path):
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(bare_git_repo),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            dns=DnsConfig(
+                nameservers=["8.8.8.8"],
+                timeout=1,
+                poll_interval=1,
+                wait_for_propagation=True,
+            ),
+        )
+
+        payload = {
+            "domain": "_acme-challenge.example.com",
+            "validation": "abc123",
+        }
+
+        with patch("app.main.check_propagation") as mock_check:
+            mock_check.return_value = {
+                "matched": [],
+                "pending": ["8.8.8.8"],
+                "elapsed": 1,
+            }
+            resp = client.post(
+                "/acme/auth",
+                json=payload,
+                headers={"Authorization": "Bearer test-key"},
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["propagation"] == "timeout"
+
+    def test_auth_without_validation_no_propagation(self, client: TestClient, tmp_path: Path, bare_git_repo: Path):
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(bare_git_repo),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            dns=DnsConfig(wait_for_propagation=True),
+        )
+
+        payload = {"domain": "_acme-challenge.example.com", "validation": "abc123"}
+        with patch("app.main.check_propagation") as mock_check:
+            mock_check.return_value = {
+                "matched": ["8.8.8.8", "1.1.1.1"],
+                "pending": [],
+                "elapsed": 1,
+            }
+            resp = client.post(
+                "/acme/auth",
+                json=payload,
+                headers={"Authorization": "Bearer test-key"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["propagation"] == "propagated"
+
+
+class TestAcmeDeployWithF5:
+    def test_deploy_with_f5_success(self, client: TestClient, tmp_path: Path):
+        secret_id_file = tmp_path / "vault_secret_id"
+        secret_id_file.write_text("test-secret-id")
+        pw_file = tmp_path / "f5_pass"
+        pw_file.write_text("f5-secret")
+
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            vault=VaultConfig(
+                addr="https://vault.example.com:8200",
+                role_id="role-abc",
+                secret_id_path=str(secret_id_file),
+                verify=False,
+                skip=False,
+            ),
+            f5=F5Config(hosts=[
+                F5HostConfig(
+                    addr="https://bigip.example.com",
+                    username="admin",
+                    password_path=str(pw_file),
+                    verify=False,
+                ),
+            ]),
+        )
+        m.vault_handler = MagicMock()
+        m.vault_handler.store_cert.return_value = "secret/certs/example.com"
+
+        mock_f5 = MagicMock()
+        mock_f5.deploy_cert.return_value = [
+            {"host": "https://bigip.example.com", "status": "ok", "updated_profiles": ["example-ssl"]},
+        ]
+        m.f5_handler = mock_f5
+
+        payload = {
+            "domain": "example.com",
+            "cert_pem": "cert-data",
+            "chain_pem": "chain-data",
+            "fullchain_pem": "fullchain-data",
+            "privkey_pem": "key-data",
+        }
+        resp = client.post(
+            "/acme/deploy",
+            json=payload,
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["vault_path"] == "secret/certs/example.com"
+        assert data["f5_results"] == [
+            {"host": "https://bigip.example.com", "status": "ok", "updated_profiles": ["example-ssl"]},
+        ]
+        mock_f5.deploy_cert.assert_called_once_with(
+            domain="example.com",
+            cert_pem="cert-data",
+            fullchain_pem="fullchain-data",
+            privkey_pem="key-data",
+        )
+
+    def test_deploy_with_f5_error(self, client: TestClient, tmp_path: Path):
+        secret_id_file = tmp_path / "vault_secret_id"
+        secret_id_file.write_text("test-secret-id")
+        pw_file = tmp_path / "f5_pass"
+        pw_file.write_text("f5-secret")
+
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            vault=VaultConfig(
+                addr="https://vault.example.com:8200",
+                role_id="role-abc",
+                secret_id_path=str(secret_id_file),
+                verify=False,
+                skip=False,
+            ),
+            f5=F5Config(hosts=[
+                F5HostConfig(
+                    addr="https://bigip.example.com",
+                    username="admin",
+                    password_path=str(pw_file),
+                    verify=False,
+                ),
+            ]),
+        )
+        m.vault_handler = MagicMock()
+        m.vault_handler.store_cert.return_value = "secret/certs/example.com"
+
+        mock_f5 = MagicMock()
+        mock_f5.deploy_cert.side_effect = Exception("F5 connection refused")
+        m.f5_handler = mock_f5
+
+        payload = {
+            "domain": "example.com",
+            "cert_pem": "cert-data",
+            "fullchain_pem": "fullchain-data",
+            "privkey_pem": "key-data",
+        }
+        resp = client.post(
+            "/acme/deploy",
+            json=payload,
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert "f5_results" in data
+        assert data["f5_results"] == [{"status": "error", "error": "F5 connection refused"}]
+
+    def test_deploy_without_f5_config(self, client: TestClient, tmp_path: Path):
+        secret_id_file = tmp_path / "vault_secret_id"
+        secret_id_file.write_text("test-secret-id")
+
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            vault=VaultConfig(
+                addr="https://vault.example.com:8200",
+                role_id="role-abc",
+                secret_id_path=str(secret_id_file),
+                verify=False,
+                skip=False,
+            ),
+        )
+        m.vault_handler = MagicMock()
+        m.vault_handler.store_cert.return_value = "secret/certs/example.com"
+        m.f5_handler = None
+
+        payload = {
+            "domain": "example.com",
+            "cert_pem": "cert-data",
+            "fullchain_pem": "fullchain-data",
+            "privkey_pem": "key-data",
+        }
+        resp = client.post(
+            "/acme/deploy",
+            json=payload,
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "f5_results" not in data
+
+
+class TestAcmeWaitForPropagationWithConfig:
+    def test_uses_dns_config_defaults(self, client: TestClient, tmp_path: Path):
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            dns=DnsConfig(
+                nameservers=["9.9.9.9", "1.1.1.1"],
+                timeout=5,
+                poll_interval=1,
+            ),
+        )
+
+        with patch("app.main.check_propagation") as mock_check:
+            mock_check.return_value = {
+                "matched": ["9.9.9.9", "1.1.1.1"],
+                "pending": [],
+                "elapsed": 1,
+            }
+            payload = {
+                "domain": "_acme-challenge.example.com",
+                "validation": "val",
+            }
+            resp = client.post(
+                "/acme/wait-for-propagation",
+                json=payload,
+                headers={"Authorization": "Bearer test-key"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["matched"] == ["9.9.9.9", "1.1.1.1"]
+        mock_check.assert_called_once()
+        _, kwargs = mock_check.call_args
+        assert kwargs["timeout"] == 5
+        assert kwargs["poll_interval"] == 1
+
+    def test_request_overrides_config(self, client: TestClient, tmp_path: Path):
+        import app.main as m
+        m.config = AppConfig(
+            auth=AuthConfig(api_keys=["test-key"]),
+            webhook=WebhookConfig(work_dir=str(tmp_path / "webhook")),
+            repo=RepoConfig(
+                url=str(tmp_path / "fake.git"),
+                branch="main",
+                zone_path="zones",
+                zone_file_suffix=".zone",
+            ),
+            dns=DnsConfig(
+                nameservers=["9.9.9.9"],
+                timeout=5,
+                poll_interval=1,
+            ),
+        )
+
+        with patch("app.main.check_propagation") as mock_check:
+            mock_check.return_value = {
+                "matched": ["4.4.4.4"],
+                "pending": [],
+                "elapsed": 1,
+            }
+            payload = {
+                "domain": "_acme-challenge.example.com",
+                "validation": "val",
+                "nameservers": ["4.4.4.4"],
+                "timeout": 3,
+                "poll_interval": 1,
+            }
+            resp = client.post(
+                "/acme/wait-for-propagation",
+                json=payload,
+                headers={"Authorization": "Bearer test-key"},
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["matched"] == ["4.4.4.4"]
 
 
 class TestConfigNotLoaded:

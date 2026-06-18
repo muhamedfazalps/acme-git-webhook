@@ -1,0 +1,319 @@
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from app.cert_monitor import CertMonitor
+from app.config import MonitorConfig
+
+
+def _expiry_iso(days_ahead: int = 30) -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=days_ahead, hours=1)).isoformat()
+
+
+class TestCertMonitorInit:
+    def test_init_with_config(self):
+        config = MonitorConfig()
+        monitor = CertMonitor(config, MagicMock())
+        assert monitor.config == config
+        assert monitor._vault is not None
+        assert monitor._scheduler is None
+        assert monitor._sent_warnings == {}
+        assert monitor._latest_status == []
+
+    def test_init_without_config(self):
+        monitor = CertMonitor(None, None)
+        assert monitor.config is None
+        assert monitor._vault is None
+
+
+class TestCertMonitorLoadCerts:
+    def test_no_vault_handler_returns_empty(self):
+        monitor = CertMonitor(MagicMock(), None)
+        assert monitor._load_certs_from_vault() == []
+
+    def test_list_secrets_error_returns_empty(self):
+        vault = MagicMock()
+        vault._ensure_authenticated.side_effect = Exception("Vault error")
+        monitor = CertMonitor(MagicMock(), vault)
+        assert monitor._load_certs_from_vault() == []
+
+    def test_empty_vault_returns_empty(self):
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {"data": {"keys": []}}
+        monitor = CertMonitor(MagicMock(), vault)
+        assert monitor._load_certs_from_vault() == []
+
+    def test_loads_valid_certificates(self):
+        vault = MagicMock()
+        expiry1 = _expiry_iso(30)
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": ["example.com/", "other.com/"]}
+        }
+        vault._client.secrets.kv.v2.read_secret_version.side_effect = [
+            {
+                "data": {
+                    "data": {
+                        "metadata": (
+                            '{"domain": "example.com", "expiry": "' + expiry1 + '", "stored_at": "2025-01-01T00:00:00+00:00"}'
+                        )
+                    }
+                }
+            },
+            {
+                "data": {
+                    "data": {
+                        "metadata": (
+                            '{"domain": "other.com", "expiry": "unknown", "stored_at": "2025-01-01T00:00:00+00:00"}'
+                        )
+                    }
+                }
+            },
+        ]
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(MagicMock(), vault)
+        certs = monitor._load_certs_from_vault()
+        assert len(certs) == 2
+        assert certs[0]["domain"] == "example.com"
+        assert certs[0]["days_left"] == 30
+        assert certs[1]["domain"] == "other.com"
+        assert certs[1]["days_left"] is None
+
+    def test_read_cert_error_skips_domain(self):
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": ["example.com/", "bad.com/"]}
+        }
+        vault._client.secrets.kv.v2.read_secret_version.side_effect = [
+            {
+                "data": {
+                    "data": {
+                        "metadata": (
+                            '{"domain": "example.com", "expiry": "' + _expiry_iso(60) + '", "stored_at": "2025-01-01T00:00:00+00:00"}'
+                        )
+                    }
+                }
+            },
+            Exception("Read error"),
+        ]
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(MagicMock(), vault)
+        certs = monitor._load_certs_from_vault()
+        assert len(certs) == 1
+        assert certs[0]["domain"] == "example.com"
+
+
+    def test_check_day_threshold_returns_when_no_config(self):
+        monitor = CertMonitor(None, None)
+        monitor._check_day_threshold("example.com", 10)
+
+
+class TestCertMonitorThreshold:
+    def test_warning_logged_at_threshold(self, caplog):
+        config = MonitorConfig(warn_days=[30, 14, 7], alert_webhook_url=None)
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": ["example.com/"]}
+        }
+        vault._client.secrets.kv.v2.read_secret_version.return_value = {
+            "data": {
+                "data": {
+                    "metadata": (
+                        '{"domain": "example.com", "expiry": "' + _expiry_iso(20) + '", "stored_at": "2025-01-01T00:00:00+00:00"}'
+                    )
+                }
+            }
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(config, vault)
+        with caplog.at_level("WARNING"):
+            monitor.run_check()
+
+        assert "expires in 20 days (threshold: 30)" in caplog.text
+        assert "expires in 20 days (threshold: 14)" not in caplog.text
+        assert "expires in 20 days (threshold: 7)" not in caplog.text
+
+    def test_no_duplicate_warnings(self, caplog):
+        config = MonitorConfig(warn_days=[30], alert_webhook_url=None)
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": ["example.com/"]}
+        }
+        vault._client.secrets.kv.v2.read_secret_version.return_value = {
+            "data": {
+                "data": {
+                    "metadata": (
+                        '{"domain": "example.com", "expiry": "' + _expiry_iso(20) + '", "stored_at": "2025-01-01T00:00:00+00:00"}'
+                    )
+                }
+            }
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(config, vault)
+        with caplog.at_level("WARNING"):
+            monitor.run_check()
+            monitor.run_check()
+
+        warning_count = caplog.text.count("example.com expires in")
+        assert warning_count == 1
+
+    def test_webhook_alert_sent(self):
+        config = MonitorConfig(
+            warn_days=[30],
+            alert_webhook_url="https://hooks.example.com/alert",
+        )
+        vault = MagicMock()
+        expiry = _expiry_iso(20)
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": ["example.com/"]}
+        }
+        vault._client.secrets.kv.v2.read_secret_version.return_value = {
+            "data": {
+                "data": {
+                    "metadata": (
+                        '{"domain": "example.com", "expiry": "' + expiry + '", "stored_at": "2025-01-01T00:00:00+00:00"}'
+                    )
+                }
+            }
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(config, vault)
+        with patch("app.cert_monitor.httpx.post") as mock_post:
+            monitor.run_check()
+            mock_post.assert_called_once()
+            call_args = mock_post.call_args
+            assert call_args[0][0] == "https://hooks.example.com/alert"
+            payload = call_args[1]["json"]
+            assert payload["domain"] == "example.com"
+            assert payload["days_left"] == 20
+
+    def test_webhook_alert_failure_logged(self, caplog):
+        config = MonitorConfig(
+            warn_days=[30],
+            alert_webhook_url="https://hooks.example.com/alert",
+        )
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": ["example.com/"]}
+        }
+        vault._client.secrets.kv.v2.read_secret_version.return_value = {
+            "data": {
+                "data": {
+                    "metadata": (
+                        '{"domain": "example.com", "expiry": "' + _expiry_iso(20) + '", "stored_at": "2025-01-01T00:00:00+00:00"}'
+                    )
+                }
+            }
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(config, vault)
+        with patch("app.cert_monitor.httpx.post", side_effect=Exception("Network error")):
+            with caplog.at_level("WARNING"):
+                monitor.run_check()
+            assert "failed to send webhook alert" in caplog.text
+
+
+class TestCertMonitorRunCheck:
+    def test_run_check_updates_latest_status(self):
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": ["example.com/"]}
+        }
+        vault._client.secrets.kv.v2.read_secret_version.return_value = {
+            "data": {
+                "data": {
+                    "metadata": (
+                        '{"domain": "example.com", "expiry": "' + _expiry_iso(60) + '", "stored_at": "2025-01-01T00:00:00+00:00"}'
+                    )
+                }
+            }
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(MonitorConfig(warn_days=[60], alert_webhook_url=None), vault)
+        result = monitor.run_check()
+        assert len(result) == 1
+        assert monitor.get_status() == result
+
+    def test_run_check_no_vault(self):
+        monitor = CertMonitor(MonitorConfig(), None)
+        result = monitor.run_check()
+        assert result == []
+
+    def test_get_status_returns_latest(self):
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": []}
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(MonitorConfig(warn_days=[60], alert_webhook_url=None), vault)
+        monitor.run_check()
+        assert monitor.get_status() == []
+
+
+class TestCertMonitorStartStop:
+    def test_start_noop_when_no_config(self):
+        monitor = CertMonitor(None, None)
+        monitor.start()
+        assert monitor._scheduler is None
+
+    def test_start_creates_scheduler_and_runs_check(self):
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": []}
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(MonitorConfig(check_interval_hours=24), vault)
+        with patch.object(monitor, "run_check") as mock_run:
+            monitor.start()
+            assert monitor._scheduler is not None
+            mock_run.assert_called_once()
+
+    def test_stop_shuts_down_scheduler(self):
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": []}
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(MonitorConfig(check_interval_hours=24), vault)
+        monitor.start()
+        assert monitor._scheduler is not None
+        monitor.stop()
+        assert monitor._scheduler is None
+
+    def test_stop_noop_when_no_scheduler(self):
+        monitor = CertMonitor(None, None)
+        monitor.stop()
+
+    def test_start_logs_message(self, caplog):
+        vault = MagicMock()
+        vault._client.secrets.kv.v2.list_secrets.return_value = {
+            "data": {"keys": []}
+        }
+        vault.config.kv_mount = "secret"
+        vault.config.certs_path = "certs"
+
+        monitor = CertMonitor(MonitorConfig(check_interval_hours=12), vault)
+        with patch.object(monitor, "run_check"):
+            with caplog.at_level("INFO"):
+                monitor.start()
+            assert "CertMonitor: started (interval=12h)" in caplog.text
