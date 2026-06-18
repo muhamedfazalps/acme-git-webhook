@@ -10,6 +10,8 @@ services:
       - webhook_data:/data/acme-git-webhook
     environment:
       - CONFIG_PATH=/app/config.yaml
+      - ACME_WEBHOOK_API_KEY=your-api-key-here
+      - ACME_WEBHOOK_URL=http://localhost:8000
 
 volumes:
   webhook_data:
