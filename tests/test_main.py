@@ -1029,3 +1029,53 @@ class TestConfigNotLoaded:
         )
         assert resp.status_code == 500
         assert resp.json()["detail"] == "Config not loaded"
+
+
+class TestAcmeWebhookApiKey:
+    def test_env_key_added_during_startup(self, monkeypatch):
+        monkeypatch.setenv("ACME_WEBHOOK_API_KEY", "env-key-123")
+        test_config = AppConfig(
+            auth=AuthConfig(api_keys=[]),
+            webhook=WebhookConfig(work_dir="/tmp"),
+            repo=RepoConfig(url="fake", branch="main", zone_path="zones"),
+        )
+        import app.main as m
+        m.cert_monitor = None
+        with patch("app.main.load_config", return_value=test_config):
+            with TestClient(app) as client:
+                resp = client.get(
+                    "/certs/status",
+                    headers={"Authorization": "Bearer env-key-123"},
+                )
+                assert resp.status_code == 200
+
+    def test_no_env_key_no_addition(self, monkeypatch):
+        monkeypatch.delenv("ACME_WEBHOOK_API_KEY", raising=False)
+        test_config = AppConfig(
+            auth=AuthConfig(api_keys=["existing-key"]),
+            webhook=WebhookConfig(work_dir="/tmp"),
+            repo=RepoConfig(url="fake", branch="main", zone_path="zones"),
+        )
+        import app.main as m
+        m.cert_monitor = None
+        with patch("app.main.load_config", return_value=test_config):
+            with TestClient(app) as client:
+                resp = client.get(
+                    "/certs/status",
+                    headers={"Authorization": "Bearer existing-key"},
+                )
+                assert resp.status_code == 200
+
+    def test_env_key_noop_when_auth_none(self, monkeypatch):
+        monkeypatch.setenv("ACME_WEBHOOK_API_KEY", "env-key-123")
+        test_config = AppConfig(
+            auth=AuthConfig(api_keys=[]),
+            webhook=WebhookConfig(work_dir="/tmp"),
+            repo=RepoConfig(url="fake", branch="main", zone_path="zones"),
+        )
+        test_config.auth = None
+        import app.main as m
+        m.cert_monitor = None
+        with patch("app.main.load_config", return_value=test_config):
+            with TestClient(app) as client:
+                assert m.config.auth is None
