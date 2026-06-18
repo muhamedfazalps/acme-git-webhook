@@ -260,6 +260,40 @@ pip install -r dev-requirements.txt
 pytest -v
 ```
 
+## Kubernetes deployment example
+
+Complete manifests are in `kubernetes/`. Quick start:
+
+```bash
+# 1. Edit placeholders (repo URL, credentials, domain)
+vim kubernetes/secret.yaml
+vim kubernetes/configmap.yaml
+vim kubernetes/certbot-init-job.yaml
+
+# 2. Deploy everything
+kubectl apply -k kubernetes/
+
+# 3. One-time GlobalSign ACME registration
+kubectl apply -f kubernetes/certbot-init-job.yaml
+kubectl wait --for=condition=complete job/acme-certbot-init --timeout=60s
+kubectl delete -f kubernetes/certbot-init-job.yaml
+
+# 4. Verify
+kubectl get pods -n acme-webhook
+```
+
+The deployment includes:
+
+| Resource | Description |
+|----------|-------------|
+| `Deployment` | 1 replica, webhook + certbot in the same image |
+| `Service` | ClusterIP `:8000` |
+| `Ingress` | TLS via cert-manager |
+| `ConfigMap` | Full `config.yaml` with GlobalSign renew |
+| `Secret` | SSH deploy key, API key, Vault secret ID, F5 password |
+| `PVC` | 1Gi RWO for certbot state (`/data/acme-git-webhook`) |
+| `Job` (one-shot) | Registers ACME account via `scripts/register-acme.sh` |
+
 ## License
 
 MIT
