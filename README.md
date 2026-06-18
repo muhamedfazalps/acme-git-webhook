@@ -6,7 +6,8 @@
 [![ghcr](https://img.shields.io/badge/GHCR-latest-blue?logo=docker)](https://github.com/ckyvra/acme-git-webhook/pkgs/container/acme-git-webhook)
 
 FastAPI webhook that provisions ACME DNS-01 challenges by adding/removing
-TXT records in Bind zone files stored in a Git repository.
+TXT records in Bind zone files stored in a Git repository, optionally
+deploys certificates to F5 Big-IP and monitors certificate expiration.
 
 ## How it works
 
@@ -19,21 +20,26 @@ ACME client (certbot/acme.sh)
         ▼
 acme-git-webhook
         │
-        │  1. git pull / Vault store
+        │  1. git pull
         │  2. dnspython: update zone file
         │  3. git commit + push
-        ▼
-GitHub repository (Bind zone files)     HashiCorp Vault (KV store)
-        │                                         │
-        │  CI/CD detects push                     │  Services retrieve
-        ▼                                         ▼
-Authoritative DNS servers (rndc reload)    secret/certs/example.com/
+        │  4. Vault: store certificate
+        │  5. F5 Big-IP: upload cert + update SSL profile (optional)
+        │  6. Monitor: check expiration (optional)
+        ├──────────────────────┬───────────────────────┬─────────────────┐
+        ▼                      ▼                       ▼                  ▼
+GitHub repo           HashiCorp Vault          F5 Big-IP          Logs / Webhook
+(Bind zones)          (KV store)               (iControl REST)    (alert on expiry)
+        │                      │                       │
+        │  CI/CD               │  Services retrieve     │  SSL profile updated
+        ▼                      ▼                       ▼
+Authoritative DNS      secret/certs/          /Common/example.com
 ```
 
 The ACME client calls the webhook three times per certificate:
 1. **auth** — injects `_acme-challenge.<domain>. IN TXT "<validation>"` into the zone file and pushes to Git
 2. **cleanup** — removes the TXT record after validation
-3. **deploy** — stores the issued certificate (cert + key + chain) in HashiCorp Vault for secure distribution
+3. **deploy** — stores the issued certificate in HashiCorp Vault, then uploads it to F5 Big-IP and updates matching Client SSL profiles (if configured)
 
 ## Configuration
 
@@ -68,6 +74,36 @@ Vault AppRole is used for authentication. The `secret_id` is read from
 a file at runtime (never stored in the config file). Mount the file
 as a Docker secret at the path specified by `secret_id_path`.
 
+### F5 Big-IP (optional)
+
+```yaml
+f5:
+  hosts:
+    - addr: "https://bigip.example.com"
+      username: "admin"
+      password_path: "/run/secrets/f5_password"
+      verify: true
+```
+
+When configured, the `/acme/deploy` endpoint uploads the fullchain and
+private key to each F5 host via iControl REST, then auto-detects Client
+SSL profiles whose `cert` field contains the domain name and updates them
+to use the new certificate.
+
+### Certificate expiration monitoring (optional)
+
+```yaml
+monitor:
+  check_interval_hours: 24
+  warn_days: [60, 30, 14, 7, 3, 1]
+  alert_webhook_url: "https://hooks.slack.com/services/xxx"
+```
+
+The monitor reads all certificates from Vault on a schedule and logs a
+warning when a certificate is within the configured `warn_days` thresholds.
+If `alert_webhook_url` is set, it sends a JSON POST alert. The cached
+status is also exposed via `GET /certs/status`.
+
 ## API
 
 | Endpoint                       | Method | Auth   | Body                                                                                               | Description                     |
@@ -76,7 +112,8 @@ as a Docker secret at the path specified by `secret_id_path`.
 | `/acme/auth`                   | POST   | Bearer | `{ "domain", "validation" }`                                                                      | Add TXT record                  |
 | `/acme/wait-for-propagation`   | POST   | Bearer | `{ "domain", "validation", "nameservers"?, "timeout"?, "poll_interval"? }`                         | Wait for DNS propagation        |
 | `/acme/cleanup`                | POST   | Bearer | `{ "domain" }`                                                                                     | Remove TXT record               |
-| `/acme/deploy`                 | POST   | Bearer | `{ "domain", "cert_pem", "chain_pem"?, "fullchain_pem", "privkey_pem" }`                           | Store certificate in Vault      |
+| `/acme/deploy`                 | POST   | Bearer | `{ "domain", "cert_pem", "chain_pem"?, "fullchain_pem", "privkey_pem" }`                           | Store certificate in Vault + deploy to F5 |
+| `/certs/status`                | GET    | Bearer | —                                                                                                  | List certificates and days left |
 
 ## Certbot usage
 
