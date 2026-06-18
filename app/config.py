@@ -84,6 +84,24 @@ class VaultConfig(BaseModel):
     skip: bool = False
 
 
+class F5HostConfig(BaseModel):
+    addr: str
+    username: str
+    password_path: str
+    verify: bool = True
+
+
+class F5Config(BaseModel):
+    hosts: list[F5HostConfig]
+
+
+class MonitorConfig(BaseModel):
+    check_interval_hours: int = 24
+    warn_days: list[int] = [60, 30, 14, 7, 3, 1]
+    alert_webhook_url: str | None = None
+    alert_webhook_headers: dict[str, str] | None = None
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration.
 
@@ -94,6 +112,8 @@ class AppConfig(BaseModel):
     webhook: WebhookConfig
     repo: RepoConfig
     vault: VaultConfig | None = None
+    f5: F5Config | None = None
+    monitor: MonitorConfig | None = None
 
 
 def load_config(path: str | None = None) -> AppConfig:

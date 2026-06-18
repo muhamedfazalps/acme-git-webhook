@@ -16,20 +16,20 @@ from slowapi.util import get_remote_address
 logger = logging.getLogger(__name__)
 
 from app.auth import verify_api_key
+from app.cert_monitor import CertMonitor
 from app.config import AppConfig, load_config
 from app.dns_probe import check_propagation, validate_nameserver
+from app.f5_handler import F5Handler
 from app.git_handler import clone_or_pull, commit_and_push
 from app.models import AcmeRequest, CertDeployRequest, PropagationRequest
 from app.vault_handler import VaultHandler
 from app.zone_handler import add_txt_record, remove_txt_record
 
-# Module-level config and vault handler, populated once at startup via
-# the lifespan hook. Using globals is the simplest approach for a
-# single-process uvicorn instance. For multi-worker deployments, they
-# should be loaded inside each worker's lifespan or passed via a
-# dependency provider.
+# Module-level globals, populated once at startup via the lifespan hook.
 config: AppConfig | None = None
 vault_handler: VaultHandler | None = None
+f5_handler: F5Handler | None = None
+cert_monitor: CertMonitor | None = None
 
 # Reusable FastAPI security scheme that extracts the Bearer token from
 # the Authorization header. It is shared by all protected endpoints.
@@ -51,19 +51,28 @@ def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load the YAML configuration and initialise the Vault handler.
+    """Load the YAML configuration and initialise handlers.
 
     FastAPI calls the lifespan context manager on startup (before any
     request is accepted) and on shutdown. The config path is read from
     the CONFIG_PATH environment variable, defaulting to "config.yaml"
     relative to the working directory.
     """
-    global config, vault_handler
+    global config, vault_handler, f5_handler, cert_monitor
     config_path = os.getenv("CONFIG_PATH", "config.yaml")
     config = load_config(config_path)
     if config.vault and not config.vault.skip:
         vault_handler = VaultHandler(config.vault)
+    if config.f5:
+        f5_handler = F5Handler(config.f5)
+    if config.monitor:
+        cert_monitor = CertMonitor(config.monitor, vault_handler)
+        cert_monitor.start()
     yield
+    if cert_monitor is not None:
+        cert_monitor.stop()
+    if f5_handler is not None:
+        f5_handler.close()
 
 
 app = FastAPI(title="acme-git-webhook", lifespan=lifespan)
@@ -155,6 +164,21 @@ def _zone_name(domain: str) -> str:
         The bare zone name (without the ACME challenge prefix).
     """
     return domain.removeprefix("_acme-challenge.").removeprefix("*.")
+
+
+@app.get("/certs/status")
+def certs_status(
+    _token: str = Depends(_auth_dep),
+):
+    """Return the latest certificate expiration status.
+
+    Returns the cached result of the last certificate monitor check.
+    If the monitor is not configured, returns an empty list.
+    """
+    monitor = cert_monitor
+    if monitor is None:
+        return {"certs": [], "detail": "Monitoring not configured"}
+    return {"certs": monitor.get_status()}
 
 
 @app.get("/health")
@@ -435,8 +459,24 @@ def acme_deploy(
             detail="Vault operation failed",
         )
 
-    return {
+    result = {
         "status": "ok",
         "domain": req.domain,
         "vault_path": vault_path,
     }
+
+    f5 = f5_handler
+    if f5 is not None:
+        try:
+            f5_results = f5.deploy_cert(
+                domain=req.domain,
+                cert_pem=req.cert_pem,
+                fullchain_pem=req.fullchain_pem,
+                privkey_pem=req.privkey_pem,
+            )
+            result["f5_results"] = f5_results
+        except Exception as e:
+            logger.error("Failed to deploy certificate to F5: %s", e)
+            result["f5_results"] = [{"status": "error", "error": str(e)}]
+
+    return result
