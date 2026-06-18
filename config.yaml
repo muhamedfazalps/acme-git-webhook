@@ -1,43 +1,68 @@
+# ── Authentication ──────────────────────────────────────────────────────
+# List of Bearer tokens accepted by the API. Generate with:
+#   python -c "import secrets; print(secrets.token_urlsafe(32))"
+
 auth:
   api_keys:
     - "sk-XXXXXXXXXXXX"
 
+# ── Webhook server ──────────────────────────────────────────────────────
+
 webhook:
-  bind: "0.0.0.0:8000"
-  work_dir: "/data/acme-git-webhook"
-  ssh_key: "/run/secrets/deploy_key"
+  bind: "0.0.0.0:8000"          # Listen address:port
+  work_dir: "/data/acme-git-webhook"   # Working directory (cloned repo, lock file)
+  ssh_key: "/run/secrets/deploy_key"   # Git deploy key (mounted file, optional)
+
+# ── Git repository (Bind zone files) ────────────────────────────────────
 
 repo:
-  url: "git@github.com:org/dns-zones.git"
+  url: "git@github.com:org/dns-zones.git"   # SSH remote URL
   branch: "main"
-  zone_path: "zones"
-  zone_file_suffix: ".zone"
+  zone_path: "zones"                         # Subdirectory containing .zone files
+  zone_file_suffix: ".zone"                  # Zone file extension
+
+# ── DNS propagation check ──────────────────────────────────────────────
+# When wait_for_propagation is true, /acme/auth automatically waits for
+# DNS propagation after pushing, removing the need for a separate call
+# to /acme/wait-for-propagation.
 
 dns:
   nameservers:
     - "8.8.8.8"
     - "1.1.1.1"
-  timeout: 120
-  poll_interval: 5
-  wait_for_propagation: true
+  timeout: 120                 # Max wait (seconds)
+  poll_interval: 5             # Seconds between polls
+  wait_for_propagation: true   # Auto-wait after /acme/auth
+
+# ── HashiCorp Vault ────────────────────────────────────────────────────
+# Certificates issued by /acme/deploy are stored here.
+# Authentication: AppRole (role_id + secret_id mounted as file).
 
 vault:
   addr: "https://vault.example.com:8200"
   role_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-  secret_id_path: "/run/secrets/vault_secret_id"
-  kv_mount: "secret"
-  certs_path: "certs"
-  verify: true
-  skip: false
+  secret_id_path: "/run/secrets/vault_secret_id"  # AppRole SecretID file
+  kv_mount: "secret"          # KV engine mount point
+  certs_path: "certs"         # Base path: secret/certs/<domain>/
+  verify: true                # TLS certificate verification
+  skip: false                 # Set true to disable Vault locally
+
+# ── F5 Big-IP (optional) ───────────────────────────────────────────────
+# When enabled, /acme/deploy uploads the certificate to each F5 host via
+# iControl REST and updates matching Client SSL profiles.
 
 # f5:
 #   hosts:
 #     - addr: "https://bigip.example.com"
 #       username: "admin"
-#       password_path: "/run/secrets/f5_password"
+#       password_path: "/run/secrets/f5_password"   # File containing the password
 #       verify: true
 
+# ── Certificate expiration monitor (optional) ──────────────────────────
+# Periodically scans Vault and sends webhook alerts when certificates are
+# about to expire. The cached status is available at GET /certs/status.
+
 # monitor:
-#   check_interval_hours: 24
-#   warn_days: [60, 30, 14, 7, 3, 1]
+#   check_interval_hours: 24          # How often to check
+#   warn_days: [60, 30, 14, 7, 3, 1]  # Thresholds (descending order)
 #   alert_webhook_url: "https://hooks.slack.com/services/xxx"
