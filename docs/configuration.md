@@ -135,6 +135,11 @@ Each target is a dictionary in the `targets` list. The `provider` field selects 
 | `services` | `str` | `"SMTP"` | Exchange services to enable (e.g. `"SMTP,IMAP"`). |
 | `timeout` | `int` | `120` | WinRM operation timeout in seconds. |
 
+> **Note:** pywinrm is an optional dependency. Install it only if you use Exchange targets:
+> ```bash
+> pip install pywinrm==0.5.0
+> ```
+
 ### Legacy `f5` section
 
 If no `targets` list exists, legacy `f5.hosts` config is automatically migrated on startup:
