@@ -34,11 +34,18 @@
 <a id=__codelineno-3-9 name=__codelineno-3-9 href=#__codelineno-3-9></a>
 <a id=__codelineno-3-10 name=__codelineno-3-10 href=#__codelineno-3-10></a><span class=c1># Run with coverage</span>
 <a id=__codelineno-3-11 name=__codelineno-3-11 href=#__codelineno-3-11></a>.venv/bin/python<span class=w> </span>-m<span class=w> </span>pytest<span class=w> </span>--cov<span class=o>=</span>app<span class=w> </span>-v
+<a id=__codelineno-3-12 name=__codelineno-3-12 href=#__codelineno-3-12></a>
+<a id=__codelineno-3-13 name=__codelineno-3-13 href=#__codelineno-3-13></a><span class=c1># Integration tests (Docker + network required)</span>
+<a id=__codelineno-3-14 name=__codelineno-3-14 href=#__codelineno-3-14></a>make<span class=w> </span>test-integration
+<a id=__codelineno-3-15 name=__codelineno-3-15 href=#__codelineno-3-15></a>
+<a id=__codelineno-3-16 name=__codelineno-3-16 href=#__codelineno-3-16></a><span class=c1># Or directly</span>
+<a id=__codelineno-3-17 name=__codelineno-3-17 href=#__codelineno-3-17></a>.venv/bin/python<span class=w> </span>-m<span class=w> </span>pytest<span class=w> </span>--run-integration<span class=w> </span>-v
 </code></pre></div> <h2 id=linting>Linting<a class=headerlink href=#linting title="Permanent link">&para;</a></h2> <div class=highlight><pre><span></span><code><a id=__codelineno-4-1 name=__codelineno-4-1 href=#__codelineno-4-1></a>make<span class=w> </span>lint
-</code></pre></div> <p>Runs <code>py_compile</code> over all application and test source files to verify syntax.</p> <h2 id=development-workflow>Development workflow<a class=headerlink href=#development-workflow title="Permanent link">&para;</a></h2> <div class=highlight><pre><span></span><code><a id=__codelineno-5-1 name=__codelineno-5-1 href=#__codelineno-5-1></a><span class=err>make</span><span class=w> </span><span class=err>check</span><span class=w>       </span><span class=c># lint + test</span>
-<a id=__codelineno-5-2 name=__codelineno-5-2 href=#__codelineno-5-2></a><span class=err>make</span><span class=w> </span><span class=err>test</span><span class=w>        </span><span class=c># run tests only</span>
-<a id=__codelineno-5-3 name=__codelineno-5-3 href=#__codelineno-5-3></a><span class=err>make</span><span class=w> </span><span class=err>lint</span><span class=w>        </span><span class=c># syntax check only</span>
-<a id=__codelineno-5-4 name=__codelineno-5-4 href=#__codelineno-5-4></a><span class=err>make</span><span class=w> </span><span class=err>clean</span><span class=w>       </span><span class=c># remove venv and __pycache__</span>
+</code></pre></div> <p>Runs <code>py_compile</code> over all application and test source files to verify syntax.</p> <h2 id=development-workflow>Development workflow<a class=headerlink href=#development-workflow title="Permanent link">&para;</a></h2> <div class=highlight><pre><span></span><code><a id=__codelineno-5-1 name=__codelineno-5-1 href=#__codelineno-5-1></a><span class=err>make</span><span class=w> </span><span class=err>check</span><span class=w>             </span><span class=c># lint + test</span>
+<a id=__codelineno-5-2 name=__codelineno-5-2 href=#__codelineno-5-2></a><span class=err>make</span><span class=w> </span><span class=err>test</span><span class=w>              </span><span class=c># run unit tests only</span>
+<a id=__codelineno-5-3 name=__codelineno-5-3 href=#__codelineno-5-3></a><span class=err>make</span><span class=w> </span><span class=err>test-integration</span><span class=w>  </span><span class=c># run all tests including integration</span>
+<a id=__codelineno-5-4 name=__codelineno-5-4 href=#__codelineno-5-4></a><span class=err>make</span><span class=w> </span><span class=err>lint</span><span class=w>              </span><span class=c># syntax check only</span>
+<a id=__codelineno-5-5 name=__codelineno-5-5 href=#__codelineno-5-5></a><span class=err>make</span><span class=w> </span><span class=err>clean</span><span class=w>             </span><span class=c># remove venv and __pycache__</span>
 </code></pre></div> <h2 id=writing-tests>Writing tests<a class=headerlink href=#writing-tests title="Permanent link">&para;</a></h2> <p>Tests live in <code>tests/</code>, one file per module (<code>test_&lt;module&gt;.py</code>).</p> <ul> <li>Use <code>unittest.mock.MagicMock</code> for mocking external services (Vault, Git, DNS, F5, etc.)</li> <li>Use <code>pytest</code> fixtures for shared setup</li> <li>New features should include tests for:</li> <li>Valid configuration (defaults and custom values)</li> <li>Invalid configuration (validation errors)</li> <li>Edge cases (<code>None</code>, empty, missing)</li> <li>Integration with existing components</li> </ul> <p>See <code>tests/conftest.py</code> for shared fixtures and helpers.</p> <h2 id=project-structure>Project structure<a class=headerlink href=#project-structure title="Permanent link">&para;</a></h2> <div class=highlight><pre><span></span><code><a id=__codelineno-6-1 name=__codelineno-6-1 href=#__codelineno-6-1></a>app/
 <a id=__codelineno-6-2 name=__codelineno-6-2 href=#__codelineno-6-2></a>├── main.py              # FastAPI app, routes, lifespan
 <a id=__codelineno-6-3 name=__codelineno-6-3 href=#__codelineno-6-3></a>├── config.py            # Pydantic models for config.yaml
@@ -58,7 +65,7 @@
 <a id=__codelineno-6-17 name=__codelineno-6-17 href=#__codelineno-6-17></a>    └── _crypto.py       # PEM-to-PFX conversion
 <a id=__codelineno-6-18 name=__codelineno-6-18 href=#__codelineno-6-18></a>
 <a id=__codelineno-6-19 name=__codelineno-6-19 href=#__codelineno-6-19></a>tests/
-<a id=__codelineno-6-20 name=__codelineno-6-20 href=#__codelineno-6-20></a>├── conftest.py          # Shared fixtures
+<a id=__codelineno-6-20 name=__codelineno-6-20 href=#__codelineno-6-20></a>├── conftest.py          # Shared fixtures (+ --run-integration option)
 <a id=__codelineno-6-21 name=__codelineno-6-21 href=#__codelineno-6-21></a>├── test_config.py
 <a id=__codelineno-6-22 name=__codelineno-6-22 href=#__codelineno-6-22></a>├── test_main.py
 <a id=__codelineno-6-23 name=__codelineno-6-23 href=#__codelineno-6-23></a>├── test_zone_handler.py
@@ -66,11 +73,12 @@
 <a id=__codelineno-6-25 name=__codelineno-6-25 href=#__codelineno-6-25></a>├── test_vault_handler.py
 <a id=__codelineno-6-26 name=__codelineno-6-26 href=#__codelineno-6-26></a>├── test_dns_probe.py
 <a id=__codelineno-6-27 name=__codelineno-6-27 href=#__codelineno-6-27></a>├── test_cert_monitor.py
-<a id=__codelineno-6-28 name=__codelineno-6-28 href=#__codelineno-6-28></a>├── test_targets_f5.py
-<a id=__codelineno-6-29 name=__codelineno-6-29 href=#__codelineno-6-29></a>├── test_targets_ivanti.py
-<a id=__codelineno-6-30 name=__codelineno-6-30 href=#__codelineno-6-30></a>├── test_targets_exchange.py
-<a id=__codelineno-6-31 name=__codelineno-6-31 href=#__codelineno-6-31></a>├── test_targets_crypto.py
-<a id=__codelineno-6-32 name=__codelineno-6-32 href=#__codelineno-6-32></a>└── test_targets_manager.py
+<a id=__codelineno-6-28 name=__codelineno-6-28 href=#__codelineno-6-28></a>├── test_integration.py  # DNS + Vault integration tests (--run-integration)
+<a id=__codelineno-6-29 name=__codelineno-6-29 href=#__codelineno-6-29></a>├── test_targets_f5.py
+<a id=__codelineno-6-30 name=__codelineno-6-30 href=#__codelineno-6-30></a>├── test_targets_ivanti.py
+<a id=__codelineno-6-31 name=__codelineno-6-31 href=#__codelineno-6-31></a>├── test_targets_exchange.py
+<a id=__codelineno-6-32 name=__codelineno-6-32 href=#__codelineno-6-32></a>├── test_targets_crypto.py
+<a id=__codelineno-6-33 name=__codelineno-6-33 href=#__codelineno-6-33></a>└── test_targets_manager.py
 </code></pre></div> <h2 id=contributing>Contributing<a class=headerlink href=#contributing title="Permanent link">&para;</a></h2> <ol> <li>Create a feature branch: <code>feat/&lt;short-description&gt;</code> or <code>fix/&lt;short-description&gt;</code></li> <li>Make your changes following existing code conventions (type hints, docstrings, Pydantic models)</li> <li>Add or update tests</li> <li>Run <code>make check</code> — all tests must pass with no warnings</li> <li>Update documentation (README, <code>docs/en/</code>, <code>docs/fr/</code>) to reflect changes</li> <li>Open a Pull Request to <code>main</code></li> </ol> <h3 id=commit-messages>Commit messages<a class=headerlink href=#commit-messages title="Permanent link">&para;</a></h3> <p>Use conventional commits:</p> <div class=highlight><pre><span></span><code><a id=__codelineno-7-1 name=__codelineno-7-1 href=#__codelineno-7-1></a>feat: add support for AcmeCorp target provider
 <a id=__codelineno-7-2 name=__codelineno-7-2 href=#__codelineno-7-2></a>
 <a id=__codelineno-7-3 name=__codelineno-7-3 href=#__codelineno-7-3></a>fix: handle empty zone file during cleanup
