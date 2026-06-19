@@ -54,6 +54,16 @@ class TestHealth:
         assert resp.json() == {"status": "ok"}
 
 
+class TestMetrics:
+    def test_metrics_endpoint(self, client: TestClient):
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+        assert resp.headers.get("content-type", "").startswith("text/plain")
+        body = resp.text
+        assert "python_info" in body
+        assert "acme_webhook_requests_total" in body
+
+
 class TestAcmeAuth:
     def test_auth_with_valid_key(self, client: TestClient, tmp_path: Path):
         payload = {
