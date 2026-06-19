@@ -19,6 +19,7 @@ from app.cert_monitor import CertMonitor
 from app.config import AppConfig, load_config
 from app.dns_probe import check_propagation, validate_nameserver
 from app.git_handler import clone_or_pull, commit_and_push
+from app.metrics import create_metrics_app, webhook_requests_total
 from app.models import AcmeRequest, CertDeployRequest, DeployRequest, PropagationRequest, RenewRequest
 from app.targets.manager import DeployManager
 from app.vault_handler import VaultHandler
@@ -83,6 +84,20 @@ app = FastAPI(title="acme-git-webhook", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
+app.mount("/metrics", create_metrics_app())
+
+
+@app.middleware("http")
+async def _count_requests(request: Request, call_next):
+    response = await call_next(request)
+    endpoint = request.url.path
+    if endpoint != "/metrics":
+        webhook_requests_total.labels(
+            endpoint=endpoint,
+            method=request.method,
+            status=response.status_code,
+        ).inc()
+    return response
 
 
 def _get_config() -> AppConfig:
