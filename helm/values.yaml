@@ -116,3 +116,29 @@ resources:
   limits:
     memory: "512Mi"
     cpu: "500m"
+
+# ── HorizontalPodAutoscaler (optional) ────────────────────────────
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# ── NetworkPolicy (optional) ──────────────────────────────────────
+# Restricts pod ingress to same-selector peers only, and egress to
+# HTTPS/HTTP/SSH on the public internet (blocking RFC1918 ranges
+# so the pod cannot reach internal cluster services by default).
+
+networkPolicy:
+  enabled: false
+  ingressFrom: []
+  egressTo: []
+
+# ── PodDisruptionBudget (optional) ────────────────────────────────
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  maxUnavailable: ""

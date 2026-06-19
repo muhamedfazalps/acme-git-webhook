@@ -1,0 +1,41 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "webhook.fullname" . }}
+  labels: {{ include "webhook.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{ include "webhook.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{ include "webhook.selectorLabels" . | nindent 14 }}
+      ports:
+        - port: 8000
+          protocol: TCP
+    {{- with .Values.networkPolicy.ingressFrom }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
+        - port: 22
+          protocol: TCP
+    {{- with .Values.networkPolicy.egressTo }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
