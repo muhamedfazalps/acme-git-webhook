@@ -38,7 +38,8 @@ class CertMonitor:
         try:
             self._vault._ensure_authenticated()
             client = self._vault._client
-            assert client is not None
+            if client is None:
+                raise RuntimeError("Vault client not available")
             mount = self._vault.config.kv_mount
             path = self._vault.config.certs_path
             domains = client.secrets.kv.v2.list_secrets(mount_point=mount, path=path)
@@ -75,7 +76,8 @@ class CertMonitor:
         return certs
 
     def _send_webhook_alert(self, domain: str, days_left: int) -> None:
-        assert self.config is not None
+        if self.config is None:
+            return
         url = self.config.alert_webhook_url
         if not url:
             return
@@ -124,7 +126,8 @@ class CertMonitor:
             )
 
     def _should_renew_by_percentage(self, domain: str, days_left: int, metadata: dict | None) -> bool:
-        assert self.config is not None
+        if self.config is None:
+            return False
         pct = self.config.renew_percentage
         if pct is None or metadata is None:
             return False
