@@ -35,8 +35,16 @@
    ```bash
    .venv/bin/python -m pytest -v
    ```
-4. Verify all 260+ tests pass and there are no new warnings.
-4. Update documentation to reflect the changes:
+4. Run Dockerfile linting:
+   ```bash
+   make dockerfile-lint
+   ```
+   or directly:
+   ```bash
+   hadolint Dockerfile
+   ```
+5. Verify all 260+ tests pass and there are no new warnings.
+6. Update documentation to reflect the changes:
    - **README.md** — update usage examples, config reference, API endpoints.
    - **`docs/` (MkDocs)** — keep the English (`en/`) and French (`fr/`) documentation in sync with any new features, config fields, or behavioural changes.
    - **Code comments and docstrings** — ensure public API docstrings are accurate, especially for new or modified endpoints.
