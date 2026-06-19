@@ -197,7 +197,8 @@ class VaultHandler:
             RuntimeError: If the SecretID file is empty.
         """
         self._ensure_authenticated()
-        assert self._client is not None
+        if self._client is None:
+            raise RuntimeError("Vault client not initialized after authentication")
 
         base_path = f"{self.config.kv_mount}/{self.config.certs_path}/{domain}"
 
@@ -247,7 +248,8 @@ class VaultHandler:
             hvac.exceptions.VaultError: If the Vault operation fails.
         """
         self._ensure_authenticated()
-        assert self._client is not None
+        if self._client is None:
+            raise RuntimeError("Vault client not initialized after authentication")
 
         try:
             self._client.secrets.kv.v2.delete_metadata_and_all_versions(

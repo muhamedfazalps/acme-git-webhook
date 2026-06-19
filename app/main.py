@@ -580,7 +580,11 @@ def deploy_cert_to_targets(
                 detail="Vault handler not available, provide PEMs explicitly",
             )
         try:
-            assert handler._client is not None
+            if handler._client is None:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Vault client not initialized",
+                )
             secret = handler._client.secrets.kv.v2.read_secret_version(
                 mount_point=handler.config.kv_mount,
                 path=f"{handler.config.certs_path}/{domain}",
