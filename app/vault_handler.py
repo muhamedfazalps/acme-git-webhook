@@ -21,7 +21,6 @@ from datetime import UTC, datetime
 import hvac
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
-
 from hvac.exceptions import InvalidPath
 
 from app.config import VaultConfig

@@ -8,3 +8,5 @@ mkdocs-static-i18n>=1.2,<2
 ruff>=0.9,<1
 mypy>=1.15,<2
 pre-commit>=4.0,<5
+types-PyYAML
+types-hvac
