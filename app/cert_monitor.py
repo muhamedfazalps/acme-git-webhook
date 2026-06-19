@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import httpx
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from app.config import MonitorConfig
+from app.config import MonitorConfig, OpensslConfig
 from app.vault_handler import VaultHandler
 
 logger = logging.getLogger(__name__)
@@ -22,9 +22,11 @@ class CertMonitor:
         self,
         config: MonitorConfig | None,
         vault_handler: VaultHandler | None,
+        openssl: OpensslConfig | None = None,
     ) -> None:
         self.config = config
         self._vault = vault_handler
+        self._openssl = openssl
         self._scheduler: BackgroundScheduler | None = None
         self._sent_warnings: dict[str, set[int]] = {}
         self._latest_status: list[dict] = []
@@ -94,6 +96,12 @@ class CertMonitor:
         if self.config is None or not self.config.renew_command:
             return
         cmd = self.config.renew_command.replace("{domain}", domain)
+        openssl = self._openssl
+        if openssl:
+            cmd = cmd.replace("{key_type}", openssl.key_algorithm)
+            cmd = cmd.replace("{key_size}", str(openssl.rsa_key_size))
+            cmd = cmd.replace("{curve}", openssl.ecdsa_curve)
+            cmd = cmd.replace("{sig_hash}", openssl.signature_hash)
         logger.info("CertMonitor: renewing %s via %s", domain, cmd)
         try:
             result = subprocess.run(

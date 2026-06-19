@@ -184,6 +184,19 @@ class DnsConfig(BaseModel):
     wait_for_propagation: bool = False
 
 
+class PostQuantumConfig(BaseModel):
+    enabled: bool = False
+    hybrid_mode: bool = True
+
+
+class OpensslConfig(BaseModel):
+    key_algorithm: Literal["rsa", "ecdsa", "ed25519"] = "ecdsa"
+    rsa_key_size: int = 4096
+    ecdsa_curve: Literal["secp256r1", "secp384r1", "secp521r1"] = "secp384r1"
+    signature_hash: Literal["sha256", "sha384", "sha512"] = "sha384"
+    post_quantum: PostQuantumConfig | None = None
+
+
 class MonitorConfig(BaseModel):
     check_interval_hours: int = 24
     warn_days: list[int] = [60, 30, 14, 7, 3, 1]
@@ -208,6 +221,7 @@ class AppConfig(BaseModel):
     dns: DnsConfig | None = None
     monitor: MonitorConfig | None = None
     targets: list[TargetConfig] | None = None
+    openssl: OpensslConfig | None = None
 
 
 def load_config(path: str | None = None) -> AppConfig:

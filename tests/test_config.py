@@ -9,6 +9,8 @@ from app.config import (
     WebhookConfig,
     RepoConfig,
     VaultConfig,
+    OpensslConfig,
+    PostQuantumConfig,
 )
 
 
@@ -204,3 +206,92 @@ class TestVaultConfig:
             secret_id_path="/secrets/id",
         )
         assert cfg.skip is False
+
+
+class TestOpensslConfig:
+    def test_defaults(self):
+        cfg = OpensslConfig()
+        assert cfg.key_algorithm == "ecdsa"
+        assert cfg.rsa_key_size == 4096
+        assert cfg.ecdsa_curve == "secp384r1"
+        assert cfg.signature_hash == "sha384"
+        assert cfg.post_quantum is None
+
+    def test_rsa_algorithm(self):
+        cfg = OpensslConfig(key_algorithm="rsa", rsa_key_size=2048)
+        assert cfg.key_algorithm == "rsa"
+        assert cfg.rsa_key_size == 2048
+
+    def test_ed25519_algorithm(self):
+        cfg = OpensslConfig(key_algorithm="ed25519")
+        assert cfg.key_algorithm == "ed25519"
+
+    def test_ecdsa_curve_options(self):
+        for curve in ("secp256r1", "secp384r1", "secp521r1"):
+            cfg = OpensslConfig(ecdsa_curve=curve)
+            assert cfg.ecdsa_curve == curve
+
+    def test_signature_hash_options(self):
+        for h in ("sha256", "sha384", "sha512"):
+            cfg = OpensslConfig(signature_hash=h)
+            assert cfg.signature_hash == h
+
+    def test_invalid_key_algorithm(self):
+        with pytest.raises(ValidationError):
+            OpensslConfig(key_algorithm="dsa")
+
+    def test_invalid_curve(self):
+        with pytest.raises(ValidationError):
+            OpensslConfig(ecdsa_curve="secp192r1")
+
+    def test_post_quantum_subsection(self):
+        cfg = OpensslConfig(post_quantum=PostQuantumConfig(enabled=True, hybrid_mode=False))
+        assert cfg.post_quantum is not None
+        assert cfg.post_quantum.enabled is True
+        assert cfg.post_quantum.hybrid_mode is False
+
+    def test_post_quantum_defaults(self):
+        cfg = OpensslConfig(post_quantum=PostQuantumConfig())
+        assert cfg.post_quantum.enabled is False
+        assert cfg.post_quantum.hybrid_mode is True
+
+
+class TestAppConfigWithOpenssl:
+    def test_openssl_section(self):
+        cfg = AppConfig(
+            auth=AuthConfig(api_keys=["k"]),
+            webhook=WebhookConfig(),
+            repo=RepoConfig(url="git@github.com:org/dns-zones.git"),
+            openssl=OpensslConfig(key_algorithm="rsa", rsa_key_size=4096),
+        )
+        assert cfg.openssl is not None
+        assert cfg.openssl.key_algorithm == "rsa"
+        assert cfg.openssl.rsa_key_size == 4096
+
+    def test_openssl_optional(self):
+        cfg = AppConfig(
+            auth=AuthConfig(api_keys=["k"]),
+            webhook=WebhookConfig(),
+            repo=RepoConfig(url="git@github.com:org/dns-zones.git"),
+        )
+        assert cfg.openssl is None
+
+    def test_load_yaml_with_openssl(self, tmp_path):
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            yaml.dump({
+                "auth": {"api_keys": ["sk-test"]},
+                "webhook": {"bind": "0.0.0.0:8000", "work_dir": "/data/foo"},
+                "repo": {"url": "git@github.com:org/dns-zones.git"},
+                "openssl": {
+                    "key_algorithm": "ecdsa",
+                    "ecdsa_curve": "secp521r1",
+                    "signature_hash": "sha512",
+                },
+            })
+        )
+        cfg = load_config(str(path))
+        assert cfg.openssl is not None
+        assert cfg.openssl.key_algorithm == "ecdsa"
+        assert cfg.openssl.ecdsa_curve == "secp521r1"
+        assert cfg.openssl.signature_hash == "sha512"

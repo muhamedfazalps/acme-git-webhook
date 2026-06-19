@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
         deploy_manager = DeployManager(target_configs)
 
     if config.monitor:
-        cert_monitor = CertMonitor(config.monitor, vault_handler)
+        cert_monitor = CertMonitor(config.monitor, vault_handler, openssl=config.openssl)
         cert_monitor.start()
     yield
     if cert_monitor is not None:

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.cert_monitor import CertMonitor
-from app.config import MonitorConfig
+from app.config import MonitorConfig, OpensslConfig
 
 
 def _expiry_iso(days_ahead: int = 30) -> str:
@@ -408,3 +408,68 @@ class TestCertMonitorRenew:
         with patch.object(monitor, "_run_renew") as mock_renew:
             monitor.run_check()
             mock_renew.assert_not_called()
+
+
+class TestCertMonitorOpensslTemplateVars:
+    def test_substitutes_key_type(self):
+        config = MonitorConfig(renew_command="certbot --key-type {key_type}")
+        openssl = OpensslConfig(key_algorithm="rsa")
+        monitor = CertMonitor(config, None, openssl=openssl)
+        with patch("app.cert_monitor.subprocess.run") as mock_run:
+            monitor._run_renew("example.com")
+            cmd = mock_run.call_args[0][0]
+            assert "--key-type rsa" in " ".join(cmd)
+
+    def test_substitutes_key_size(self):
+        config = MonitorConfig(renew_command="certbot --rsa-key-size {key_size}")
+        openssl = OpensslConfig(rsa_key_size=4096)
+        monitor = CertMonitor(config, None, openssl=openssl)
+        with patch("app.cert_monitor.subprocess.run") as mock_run:
+            monitor._run_renew("example.com")
+            cmd = mock_run.call_args[0][0]
+            assert "--rsa-key-size 4096" in " ".join(cmd)
+
+    def test_substitutes_curve(self):
+        config = MonitorConfig(renew_command="certbot --elliptic-curve {curve}")
+        openssl = OpensslConfig(ecdsa_curve="secp521r1")
+        monitor = CertMonitor(config, None, openssl=openssl)
+        with patch("app.cert_monitor.subprocess.run") as mock_run:
+            monitor._run_renew("example.com")
+            cmd = mock_run.call_args[0][0]
+            assert "--elliptic-curve secp521r1" in " ".join(cmd)
+
+    def test_substitutes_sig_hash(self):
+        config = MonitorConfig(renew_command="openssl req -{sig_hash}")
+        openssl = OpensslConfig(signature_hash="sha512")
+        monitor = CertMonitor(config, None, openssl=openssl)
+        with patch("app.cert_monitor.subprocess.run") as mock_run:
+            monitor._run_renew("example.com")
+            cmd = mock_run.call_args[0][0]
+            assert "-sha512" in " ".join(cmd)
+
+    def test_no_substitution_when_no_openssl_config(self):
+        config = MonitorConfig(renew_command="certbot --key-type rsa")
+        monitor = CertMonitor(config, None, openssl=None)
+        with patch("app.cert_monitor.subprocess.run") as mock_run:
+            monitor._run_renew("example.com")
+            cmd = mock_run.call_args[0][0]
+            assert "--key-type rsa" in " ".join(cmd)
+
+    def test_all_variables_substituted(self):
+        config = MonitorConfig(
+            renew_command="certbot --key-type {key_type} --rsa-key-size {key_size} --elliptic-curve {curve} -{sig_hash}"
+        )
+        openssl = OpensslConfig(
+            key_algorithm="ecdsa",
+            rsa_key_size=2048,
+            ecdsa_curve="secp256r1",
+            signature_hash="sha256",
+        )
+        monitor = CertMonitor(config, None, openssl=openssl)
+        with patch("app.cert_monitor.subprocess.run") as mock_run:
+            monitor._run_renew("example.com")
+            cmd = " ".join(mock_run.call_args[0][0])
+            assert "--key-type ecdsa" in cmd
+            assert "--rsa-key-size 2048" in cmd
+            assert "--elliptic-curve secp256r1" in cmd
+            assert "-sha256" in cmd
