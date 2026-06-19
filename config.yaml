@@ -58,6 +58,24 @@ vault:
 #       password_path: "/run/secrets/f5_password"   # File containing the password
 #       verify: true
 
+# ── OpenSSL key generation parameters (optional) ───────────────────────
+# Controls the cryptographic parameters used when generating private keys
+# and CSRs. The values are exposed as template variables for the
+# renew_command: {key_type}, {key_size}, {curve}, {sig_hash}.
+#
+# Example certbot usage in renew_command:
+#   certbot certonly --key-type {key_type} --rsa-key-size {key_size} \
+#     --elliptic-curve {curve} ...
+
+# openssl:
+#   key_algorithm: "ecdsa"          # rsa, ecdsa, or ed25519
+#   rsa_key_size: 4096              # Only used when key_algorithm is "rsa"
+#   ecdsa_curve: "secp384r1"        # secp256r1, secp384r1, or secp521r1
+#   signature_hash: "sha384"        # sha256, sha384, or sha512
+#   post_quantum:
+#     enabled: false
+#     hybrid_mode: true
+
 # ── Certificate expiration monitor (optional) ──────────────────────────
 # Periodically scans Vault and sends webhook alerts when certificates are
 # about to expire. The cached status is available at GET /certs/status.
@@ -66,8 +84,8 @@ vault:
 #   check_interval_hours: 24          # How often to check
 #   warn_days: [60, 30, 14, 7, 3, 1]  # Thresholds (descending order)
 #   alert_webhook_url: "https://hooks.slack.com/services/xxx"
-#   renew_command: "certbot renew --cert-name {domain} --deploy-hook /opt/deploy-hook.sh --config-dir /data/acme-git-webhook/letsencrypt --work-dir /tmp/certbot-work --logs-dir /tmp/certbot-logs"
+#   renew_command: "certbot renew --cert-name {domain} --key-type {key_type} --rsa-key-size {key_size} --elliptic-curve {curve} --deploy-hook /opt/deploy-hook.sh --config-dir /data/acme-git-webhook/letsencrypt --work-dir /tmp/certbot-work --logs-dir /tmp/certbot-logs"
 #   # GlobalSign example (requires EAB registration first, see scripts/register-acme.sh):
-#   # renew_command: "certbot renew --cert-name {domain} --server https://emea.acme.atlas.globalsign.com/directory --deploy-hook /opt/deploy-hook.sh --config-dir /data/acme-git-webhook/letsencrypt --work-dir /tmp/certbot-work --logs-dir /tmp/certbot-logs"
+#   # renew_command: "certbot renew --cert-name {domain} --key-type {key_type} --rsa-key-size {key_size} --elliptic-curve {curve} --server https://emea.acme.atlas.globalsign.com/directory --deploy-hook /opt/deploy-hook.sh --config-dir /data/acme-git-webhook/letsencrypt --work-dir /tmp/certbot-work --logs-dir /tmp/certbot-logs"
 #   renew_timeout: 300                # Max seconds for renewal command
 #   renew_threshold: 14               # Days before expiry to auto-renew
