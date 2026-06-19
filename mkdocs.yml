@@ -35,7 +35,6 @@ plugins:
   - minify:
       minify_html: true
   - i18n:
-      docs_structure: suffix
       languages:
         - locale: en
           name: English
