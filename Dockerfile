@@ -4,8 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git openssh-client certbot \
     && rm -rf /var/lib/apt/lists/*
 
-COPY scripts/deploy-hook.sh /opt/deploy-hook.sh
-RUN chmod +x /opt/deploy-hook.sh
+COPY --chmod=+x scripts/deploy-hook.sh /opt/deploy-hook.sh
 
 RUN addgroup --system app && adduser --system --ingroup app app
 

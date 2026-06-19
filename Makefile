@@ -6,7 +6,7 @@ IMAGE = ghcr.io/ckyvra/acme-git-webhook
 GIT_SHA = $(shell git rev-parse --short HEAD)
 TAG ?= latest
 
-.PHONY: all test lint typecheck check docker-build docker-push docker-push-sha clean venv
+.PHONY: all test lint typecheck dockerfile-lint check docker-build docker-push docker-push-sha clean venv
 
 all: test lint typecheck
 
@@ -27,7 +27,10 @@ lint: venv
 typecheck: venv
 	$(VENV)/bin/mypy app/
 
-check: venv lint typecheck test
+dockerfile-lint:
+	hadolint Dockerfile
+
+check: venv lint typecheck dockerfile-lint test
 
 docker-build:
 	docker build -t $(IMAGE):$(TAG) .
